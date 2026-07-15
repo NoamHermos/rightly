@@ -3,8 +3,8 @@
 ## Supported version
 
 Only the latest published Rightly release is supported. The `main` branch is
-the development source used by the current one-line installer until the first
-versioned release is published.
+the development source used by the default one-line installer; versioned tags
+provide immutable source snapshots for users who prefer a pinned installation.
 
 ## Reporting a vulnerability
 

@@ -1,5 +1,14 @@
 # Third-party notices
 
+## Original Codex RTL implementation
+
+Portions of Rightly are derived from the project that preceded this standalone
+repository. Its original MIT notice is preserved here as required by the
+license:
+
+Copyright (c) 2026 RT-AI — Roi Itach <roi@rt-ai.co.il>
+https://rt-ai.co.il
+
 ## Claude Desktop RTL Patch
 
 Rightly's Claude integration downloads and transforms pinned revision
@@ -7,6 +16,10 @@ Rightly's Claude integration downloads and transforms pinned revision
 of `shraga100/claude-desktop-rtl-patch`.
 
 Copyright (c) 2026 shraga100
+
+## MIT license text
+
+The components identified above are distributed under the following license:
 
 MIT License
 

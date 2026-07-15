@@ -140,6 +140,7 @@ Assert-True ($readme.Contains('NoamHermos/rightly-rtl/main/install-online.ps1'))
 Assert-True ($readme.Contains('## How it works')) "README architecture summary is missing"
 Assert-True ($readme.Contains('No scheduled task')) "README does not state that background repair is disabled"
 Assert-True ($readme.Contains('Repair RTL')) "README does not explain the repair shortcut"
+Assert-True ($thirdParty.Contains('Copyright (c) 2026 RT-AI')) "Original MIT attribution is missing"
 Assert-True ($thirdParty.Contains('Copyright (c) 2026 shraga100')) "Pinned Claude engine attribution is missing"
 Assert-True ($readme -notmatch '[\u0590-\u05FF\uFB1D-\uFB4F]') "README must be entirely English"
 Assert-True ($readme -notmatch '(?m)!\[') "README must not embed Markdown images"
