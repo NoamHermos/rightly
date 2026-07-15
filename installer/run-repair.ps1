@@ -9,17 +9,11 @@ param(
 $ErrorActionPreference = "Stop"
 $installerDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $root = Split-Path -Parent $installerDir
-$installer = Join-Path $installerDir "install.ps1"
+$onlineInstaller = Join-Path $installerDir "install-online.ps1"
 $logDir = Join-Path $root "logs"
 $logName = if ($Target -eq "Prompt") { "repair-interactive.log" } else { "repair-$($Target.ToLowerInvariant()).log" }
 $logPath = Join-Path $logDir $logName
 New-Item -ItemType Directory -Path $logDir -Force | Out-Null
-
-# Silence Node's non-fatal deprecation and warning output (for example the
-# url.parse DEP0169 notice) for every Node subprocess started during the
-# repair, so their console noise is never mistaken for a Rightly failure.
-$env:NODE_NO_WARNINGS = "1"
-$env:NODE_OPTIONS = (@($env:NODE_OPTIONS, "--no-deprecation") | Where-Object { $_ }) -join " "
 
 function Wait-RightlyClose {
     Write-Host ""
@@ -34,8 +28,15 @@ function Wait-RightlyClose {
 $succeeded = $false
 try {
     Start-Transcript -LiteralPath $logPath -Force | Out-Null
-    if (-not (Test-Path -LiteralPath $installer)) { throw "Rightly installer is missing: $installer" }
-    & $installer -Target $Target -RepairMode
+    if (-not (Test-Path -LiteralPath $onlineInstaller)) {
+        throw "Rightly online installer is missing: $onlineInstaller"
+    }
+
+    # The local bootstrap always downloads main before it invokes the repair.
+    # A successful desktop-shortcut run therefore uses the current repository
+    # rather than the source snapshot copied during the first installation.
+    Write-Host "Checking for the latest Rightly version..." -ForegroundColor Cyan
+    & $onlineInstaller -Repo "NoamHermos/rightly" -Branch "main" -Target $Target -RepairMode
     $succeeded = $true
 } catch {
     try { Add-Content -LiteralPath $logPath -Value "$(Get-Date -Format o) FATAL $($_.Exception.Message)" -Encoding UTF8 } catch { }

@@ -19,11 +19,13 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-# Keep Node's non-fatal deprecation and warning output (for example the
-# url.parse DEP0169 notice from the patch engine's tooling) off the console so
-# it is never mistaken for a Rightly failure.
-$env:NODE_NO_WARNINGS = "1"
-$env:NODE_OPTIONS = (@($env:NODE_OPTIONS, "--no-deprecation") | Where-Object { $_ }) -join " "
+# Hide only Node deprecation notices (for example DEP0169 from Claude's own
+# Electron runtime). Other warnings remain visible so genuine problems are not
+# accidentally masked, and the flag is added at most once.
+$nodeOptions = @($env:NODE_OPTIONS -split '\s+' | Where-Object { $_ })
+if ($nodeOptions -notcontains "--no-deprecation") {
+    $env:NODE_OPTIONS = (@($nodeOptions) + "--no-deprecation") -join " "
+}
 
 $Script:ModuleRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Script:PayloadPath = Join-Path $Script:ModuleRoot "claude-rtl-payload.js"
