@@ -388,6 +388,37 @@ function Remove-LegacyModificationPackage {
 }
 
 # In-place ASAR installation ------------------------------------------------
+function Write-AsarAccessDiagnostics {
+    param([string] $Path, [string] $Stage)
+
+    # Emitted through Write-Host so Start-Transcript captures the full picture:
+    # the running identity, the file owner, its attributes, and the complete
+    # ACL. When a WindowsApps write is refused, this is what pinpoints whether
+    # the block is an inherited deny ACE, a missing grant, or a stale owner.
+    try {
+        Write-Info "---- ACL diagnostics ($Stage): $Path"
+        $whoami = Join-Path $env:WINDIR "System32\whoami.exe"
+        $identity = (& $whoami 2>&1) -join ""
+        Write-Info "  Running as: $identity (elevated: $(Test-IsAdministrator))"
+
+        $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+        if ($item) { Write-Info "  Attributes: $($item.Attributes)" }
+        else { Write-Info "  Attributes: <path not found>" }
+
+        try {
+            $acl = Get-Acl -LiteralPath $Path -ErrorAction Stop
+            Write-Info "  Owner: $($acl.Owner)"
+            foreach ($ace in $acl.Access) {
+                $flags = @()
+                if ($ace.IsInherited) { $flags += "inherited" } else { $flags += "explicit" }
+                Write-Info "  ACE: $($ace.AccessControlType) $($ace.IdentityReference) [$($ace.FileSystemRights)] ($($flags -join ','))"
+            }
+        } catch {
+            Write-Info "  Get-Acl failed: $($_.Exception.Message)"
+        }
+    } catch { }
+}
+
 function Grant-AsarWriteAccess {
     param([string] $AsarPath)
     if (-not (Test-IsAdministrator)) { throw "Administrator rights are required to patch the official GPT ASAR." }
@@ -398,27 +429,37 @@ function Grant-AsarWriteAccess {
     $attrib = Join-Path $env:WINDIR "System32\attrib.exe"
     $userSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 
+    Write-AsarAccessDiagnostics -Path $AsarPath -Stage "before grant"
+
     # Newer WindowsApps packages enforce the parent directory ACL in addition
-    # to the target file ACL. Own and grant both objects before the write, while
-    # keeping the scope limited to resources and app.asar (never the package).
+    # to the target file ACL. Own both objects (scope stays limited to resources
+    # and app.asar, never the package) so their DACLs become authoritative.
     [void] (Invoke-NativeUtility -FilePath $takeown -Arguments @("/F", $resourcesDir, "/A") `
         -FailureMessage "Could not take ownership of the official GPT resources folder")
     [void] (Invoke-NativeUtility -FilePath $takeown -Arguments @("/F", $AsarPath, "/A") `
         -FailureMessage "Could not take ownership of the official GPT ASAR")
+
+    # On Windows 11's protected WindowsApps tree the block is usually an
+    # inherited deny ACE that flows down from a package/parent folder. A grant
+    # cannot override an inherited deny, and /remove:d cannot delete an inherited
+    # ACE from the child, so detach inheritance on app.asar first (this drops the
+    # inherited deny), then write explicit full-control ACEs. SYSTEM and ALL
+    # APPLICATION PACKAGES keep read access so the packaged app still loads.
+    [void] (Invoke-NativeUtility -FilePath $icacls `
+        -Arguments @($AsarPath, "/inheritance:r") -IgnoreExitCode)
+    [void] (Invoke-NativeUtility -FilePath $icacls `
+        -Arguments @($AsarPath, "/remove:d", '*S-1-5-32-544', "*$userSid") -IgnoreExitCode)
+    [void] (Invoke-NativeUtility -FilePath $icacls `
+        -Arguments @($AsarPath, "/grant", '*S-1-5-32-544:(F)', "*$userSid`:(F)", '*S-1-5-18:(F)', '*S-1-15-2-1:(RX)') `
+        -FailureMessage "Could not grant write access to the official GPT ASAR")
+
+    # The parent directory must allow adding and deleting the entry so both the
+    # in-place overwrite and the rename fallback can replace app.asar.
     [void] (Invoke-NativeUtility -FilePath $icacls `
         -Arguments @($resourcesDir, "/grant", '*S-1-5-32-544:(F)', "*$userSid`:(F)") `
         -FailureMessage "Could not grant write access to the official GPT resources folder")
     [void] (Invoke-NativeUtility -FilePath $icacls `
-        -Arguments @($AsarPath, "/grant", '*S-1-5-32-544:(F)', "*$userSid`:(F)") `
-        -FailureMessage "Could not grant write access to the official GPT ASAR")
-
-    # An explicit deny ACE overrides the grants above during access checks, so
-    # drop any deny entries for the administrators group and the repair user on
-    # both objects. Missing entries leave icacls a no-op, hence IgnoreExitCode.
-    [void] (Invoke-NativeUtility -FilePath $icacls `
         -Arguments @($resourcesDir, "/remove:d", '*S-1-5-32-544', "*$userSid") -IgnoreExitCode)
-    [void] (Invoke-NativeUtility -FilePath $icacls `
-        -Arguments @($AsarPath, "/remove:d", '*S-1-5-32-544', "*$userSid") -IgnoreExitCode)
 
     # WindowsApps stages app.asar with the read-only (and sometimes system)
     # attribute set. Opening a read-only file for write returns an access-denied
@@ -431,6 +472,8 @@ function Grant-AsarWriteAccess {
     try {
         Set-ItemProperty -LiteralPath $AsarPath -Name IsReadOnly -Value $false -ErrorAction Stop
     } catch { }
+
+    Write-AsarAccessDiagnostics -Path $AsarPath -Stage "after grant"
 }
 
 function Test-IsAccessDeniedException {
@@ -526,6 +569,7 @@ function Set-AsarByRename {
         Remove-Item -LiteralPath $aside -Force -ErrorAction SilentlyContinue
     }
 
+    Write-AsarAccessDiagnostics -Path $Destination -Stage "before rename"
     [System.IO.File]::Move($Destination, $aside)
     try {
         [System.IO.File]::Copy($Source, $Destination, $false)
