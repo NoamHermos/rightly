@@ -16,6 +16,13 @@ payload = payload.replace(
     "    window.__RT_AI_TEST_APPLY_BLOCK_DIR__ = applyBlockDir;\n\n" + hookPoint
 );
 
+const questionHook = "    function processQuestionText(root) {";
+assert.ok(payload.includes(questionHook), "AskUserQuestion hook point is missing");
+payload = payload.replace(
+    questionHook,
+    "    window.__RT_AI_TEST_DIRECT_TEXT__ = directText;\n" + questionHook
+);
+
 const context = {
     window: {},
     document: {
@@ -28,6 +35,7 @@ const context = {
 vm.runInNewContext(payload, context, { filename: payloadPath });
 const detectTextDir = context.window.__RT_AI_TEST_DETECT_TEXT_DIR__;
 const applyBlockDir = context.window.__RT_AI_TEST_APPLY_BLOCK_DIR__;
+const directText = context.window.__RT_AI_TEST_DIRECT_TEXT__;
 
 assert.equal(detectTextDir("Hello שלום"), "rtl");
 assert.equal(detectTextDir("Claude - בדיקה"), "rtl");
@@ -69,5 +77,15 @@ applyBlockDir(restored, "rtl");
 applyBlockDir(restored, null);
 assert.equal(restored.getAttribute("dir"), "auto");
 assert.equal(restored.style.textAlign, "center");
+
+const questionText = makeElement("DIV");
+questionText.childNodes = [
+    { nodeType: 3, textContent: "PR לא לפתוח" },
+    { nodeType: 1, textContent: "1" }
+];
+assert.equal(directText(questionText), "PR לא לפתוח");
+applyBlockDir(questionText, detectTextDir(directText(questionText)));
+assert.equal(questionText.dir, "rtl");
+assert.equal(questionText.style.textAlign, "right");
 
 console.log("Claude RTL direction tests passed.");

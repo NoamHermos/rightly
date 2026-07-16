@@ -146,6 +146,7 @@ Assert-True (-not $claudePatcher.Contains('Register-ScheduledTask')) "Claude mus
 Assert-True ($claudePatcher.Contains('--no-deprecation')) "Claude deprecation warning suppression is missing"
 Assert-True (-not $claudePatcher.Contains('NODE_NO_WARNINGS')) "Claude patcher must not suppress every Node warning"
 Assert-True (-not $patcher.Contains('NODE_NO_WARNINGS')) "GPT patcher must not suppress Node warnings"
+Assert-True ((Read-RepoFile "src\claude\claude-rtl-payload.js").Contains('processInteractiveQuestions')) "Claude question panels are not processed"
 
 # Brand assets are valid PNG/ICO files, not placeholders.
 $png = [System.IO.File]::ReadAllBytes((Join-Path $repoRoot "assets\rightly-logo.png"))

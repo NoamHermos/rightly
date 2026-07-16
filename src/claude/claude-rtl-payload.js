@@ -19,6 +19,8 @@
     var CODE_SEL = "pre, code, .cm-editor, .monaco-editor, .shiki, .hljs, [data-language]";
     var TEXT_SEL = "p, li, h1, h2, h3, h4, h5, h6, blockquote, td, th";
     var TABLE_SEL = "table";
+    var QUESTION_ROOT_SEL = "[role=\"dialog\"], [aria-modal=\"true\"], [role=\"radiogroup\"]";
+    var QUESTION_TEXT_SEL = "div, span, label, p, h1, h2, h3, h4, h5, h6";
     var APP_CHROME_SEL = "nav, aside, [role=\"navigation\"], [role=\"menu\"], [role=\"menubar\"], [role=\"toolbar\"], [data-rt-ai-claude-ignore]";
     var MANAGED_DIR_ATTR = "data-rt-ai-claude-dir";
     var TABLE_WRAPPER_ATTR = "data-rt-ai-claude-table-wrapper";
@@ -78,6 +80,15 @@
             } else if (node.nodeType === 1 && !node.matches(CODE_SEL)) {
                 out += textWithoutCode(node);
             }
+        }
+        return out;
+    }
+
+    function directText(el) {
+        var out = "";
+        var nodes = el.childNodes || [];
+        for (var i = 0; i < nodes.length; i++) {
+            if (nodes[i].nodeType === 3) out += nodes[i].textContent || "";
         }
         return out;
     }
@@ -284,12 +295,68 @@
         qsa(root, INPUT_SEL).forEach(processInputElement);
     }
 
+    // AskUserQuestion panels ------------------------------------------------
+    // Claude renders these panels from generic div/span elements instead of
+    // prose tags. We identify the interactive cluster, then direction only
+    // its text-bearing descendants. The panel, buttons, shortcut numbers,
+    // close control, and flex ordering deliberately remain LTR.
+    function isQuestionCluster(el) {
+        if (!el || !el.querySelectorAll || !hasRTL(el.textContent || "")) return false;
+        var textLength = (el.textContent || "").length;
+        var controlCount = el.querySelectorAll("button, [role=\"radio\"]").length;
+        return controlCount >= 3 && controlCount <= 10 && textLength <= 5000;
+    }
+
+    function findQuestionCluster(el) {
+        var item = el;
+        for (var depth = 0; item && depth < 7; depth++, item = item.parentElement) {
+            if (item.matches && item.matches(QUESTION_ROOT_SEL) && hasRTL(item.textContent || "")) {
+                return item;
+            }
+            if (isQuestionCluster(item)) return item;
+            if (item === document.body || isInsideAppChrome(item)) break;
+        }
+        return null;
+    }
+
+    function processQuestionText(root) {
+        qsaWithClosest(root, QUESTION_TEXT_SEL).forEach(function (el) {
+            if (el === root || isInsideInput(el) || isInsideCode(el) || isInsideAppChrome(el)) return;
+            if (el.matches && el.matches("button, [role=\"radio\"]")) return;
+
+            // Prefer the smallest block that owns actual text. This avoids
+            // changing direction on outer flex containers and moving controls.
+            var ownText = directText(el);
+            var hasElementChildren = !!(el.children && el.children.length);
+            var control = el.closest && el.closest("button, [role=\"radio\"]");
+            var isControlTextWrapper = control && el !== control &&
+                !el.querySelector("button, [role=\"radio\"]") && hasRTL(el.textContent || "");
+            if (!hasRTL(ownText) && hasElementChildren && !isControlTextWrapper) return;
+            applyBlockDir(el, detectTextDir(ownText || el.textContent || ""));
+        });
+    }
+
+    function processInteractiveQuestions(root) {
+        var roots = [];
+        qsaWithClosest(root, QUESTION_ROOT_SEL).forEach(function (candidate) {
+            if (hasRTL(candidate.textContent || "")) roots.push(candidate);
+        });
+
+        qsaWithClosest(root, "input, textarea, [contenteditable=\"true\"]").forEach(function (input) {
+            var cluster = findQuestionCluster(input);
+            if (cluster && roots.indexOf(cluster) === -1) roots.push(cluster);
+        });
+
+        roots.forEach(processQuestionText);
+    }
+
     // Styling and lifecycle --------------------------------------------------
     function processAll(root) {
         var base = root || document.body || document;
         processTables(base);
         processText(base);
         processInputs(base);
+        processInteractiveQuestions(base);
         forceCodeLTR(base);
     }
 
@@ -350,6 +417,7 @@
             if (roots.length <= 30) {
                 roots.forEach(processAll);
                 processInputs(document);
+                processInteractiveQuestions(document);
             } else {
                 schedule(document.body);
             }
