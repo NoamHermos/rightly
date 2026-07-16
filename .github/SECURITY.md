@@ -21,9 +21,10 @@ removed.
 Rightly performs privileged and application-integrity-sensitive operations, so
 users should review the installer before running it.
 
-- **GPT Work / Codex:** the official MSIX package is not modified. Rightly
-  launches it with a random loopback-only DevTools port, injects the renderer
-  payload, verifies the marker, and disconnects after a bounded startup window.
+- **GPT Work / Codex:** Rightly modifies the official package's external
+  `app.asar` in place. Before doing so, it creates a package-version-specific
+  backup and records SHA-256 hashes for the original and patched files. Restore
+  operations refuse backups from another version or unexpected file contents.
 - **Claude:** Rightly downloads one pinned upstream patch script, verifies its
   exact SHA-256 digest, replaces only its renderer payload and non-interactive
   entry point, then relies on that engine's backup and rollback flow. That
@@ -41,7 +42,7 @@ users should review the installer before running it.
 ## In scope
 
 - Unsafe command execution or argument handling.
-- DevTools exposure outside `127.0.0.1` or an injector that remains connected.
+- GPT package-version, hash-verification, or rollback bypasses.
 - Hash-verification bypasses in the Claude integration.
 - Path traversal or deletion outside Rightly's documented managed directories.
 - Failure of backup or rollback logic that can leave an official app unusable.

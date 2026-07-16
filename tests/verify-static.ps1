@@ -27,9 +27,8 @@ $required = @(
     "assets\rightly-logo.png",
     "assets\rightly.ico",
     "src\gpt\patch.ps1",
-    "src\gpt\launch-gpt.ps1",
-    "src\gpt\gpt-rtl-cdp.js",
     "src\gpt\codex-rtl-payload.js",
+    "src\gpt\lib\Rightly.GptAsar.ps1",
     "src\claude\patch.ps1",
     "src\claude\claude-rtl-payload.js",
     "tests\verify-package.ps1"
@@ -75,7 +74,7 @@ $powerShellFiles = @(
     "installer\lib\Rightly.Install.ps1",
     "tests\verify-package.ps1",
     "src\gpt\patch.ps1",
-    "src\gpt\launch-gpt.ps1",
+    "src\gpt\lib\Rightly.GptAsar.ps1",
     "src\claude\patch.ps1"
 )
 foreach ($relative in $powerShellFiles) {
@@ -92,25 +91,25 @@ $onlineInstaller = Read-RepoFile "installer\install-online.ps1"
 $installerModule = Read-RepoFile "installer\lib\Rightly.Install.ps1"
 $uninstaller = Read-RepoFile "installer\uninstall.ps1"
 $patcher = Read-RepoFile "src\gpt\patch.ps1"
-$launcher = Read-RepoFile "src\gpt\launch-gpt.ps1"
-$injector = Read-RepoFile "src\gpt\gpt-rtl-cdp.js"
+$asarModule = Read-RepoFile "src\gpt\lib\Rightly.GptAsar.ps1"
 $payload = Read-RepoFile "src\gpt\codex-rtl-payload.js"
 $claudePatcher = Read-RepoFile "src\claude\patch.ps1"
 $repair = Read-RepoFile "installer\run-repair.ps1"
 $readme = Read-RepoFile "README.md"
 $thirdParty = Read-RepoFile "docs\THIRD_PARTY_NOTICES.md"
 
-# GPT uses the official app and a bounded, loopback-only startup injector.
-Assert-True ($patcher.Contains('architecture = "loopback-cdp-runtime"')) "Active GPT runtime architecture is missing"
-Assert-True ($patcher.Contains('Remove-LegacyAutomaticPatching')) "Legacy GPT task cleanup is missing"
+# GPT uses a persistent, version-bound patch of the official external ASAR.
+Assert-True ($patcher.Contains('architecture = "official-in-place-asar"')) "Persistent GPT architecture is missing"
+Assert-True ($patcher.Contains('Remove-LegacyRuntime')) "Legacy GPT runtime cleanup is missing"
 Assert-True ($patcher.Contains('Remove-LegacyCopiedApps')) "Legacy GPT copy cleanup is missing"
 Assert-True (-not $patcher.Contains('architecture = "embedded-app-copy"')) "Active GPT patcher still identifies as a copy"
-Assert-True ($launcher.Contains('--remote-debugging-address=127.0.0.1')) "GPT DevTools is not loopback-only"
-Assert-True ($launcher.Contains('"--injection-window-ms", "20000"')) "GPT injector lifetime is not bounded"
-Assert-True ($injector.Contains('Runtime.evaluate')) "GPT payload injection is missing"
-Assert-True ($injector.Contains('writeResult("success"')) "GPT verification handshake is missing"
-Assert-True ($launcher.Contains('Wait-InjectorVerification')) "GPT launcher does not wait for verification"
-Assert-True (-not $injector.Contains('setInterval')) "GPT injector must not poll forever"
+Assert-True ($patcher.Contains('Grant-AsarWriteAccess')) "GPT in-place installation is missing"
+Assert-True ($patcher.Contains('rollback backup failed SHA-256 verification')) "GPT rollback validation is missing"
+Assert-True ($asarModule.Contains('@electron/asar')) "GPT ASAR tooling is missing"
+Assert-True ($asarModule.Contains('webview\assets\app-main-*.js')) "GPT renderer discovery is missing"
+Assert-True (-not $patcher.Contains('--remote-debugging')) "Old GPT DevTools startup leaked into the patcher"
+Assert-True (-not (Test-Path -LiteralPath (Join-Path $repoRoot 'src\gpt\gpt-rtl-cdp.js'))) "Obsolete GPT injector still exists"
+Assert-True (-not (Test-Path -LiteralPath (Join-Path $repoRoot 'src\gpt\launch-gpt.ps1'))) "Obsolete GPT launcher still exists"
 
 # Renderer rules cover mixed RTL text while preserving app chrome and code.
 Assert-True ($payload.Contains('hasHebrew')) "Hebrew-anywhere detection is missing"
@@ -147,7 +146,6 @@ Assert-True (-not $claudePatcher.Contains('Register-ScheduledTask')) "Claude mus
 Assert-True ($claudePatcher.Contains('--no-deprecation')) "Claude deprecation warning suppression is missing"
 Assert-True (-not $claudePatcher.Contains('NODE_NO_WARNINGS')) "Claude patcher must not suppress every Node warning"
 Assert-True (-not $patcher.Contains('NODE_NO_WARNINGS')) "GPT patcher must not suppress Node warnings"
-Assert-True (-not $launcher.Contains('NODE_NO_WARNINGS')) "GPT launcher must not suppress Node warnings"
 
 # Brand assets are valid PNG/ICO files, not placeholders.
 $png = [System.IO.File]::ReadAllBytes((Join-Path $repoRoot "assets\rightly-logo.png"))
@@ -169,6 +167,7 @@ Assert-True ($readme.Contains('NoamHermos/rightly/main/installer/install-online.
 Assert-True ($readme.Contains('## How it works')) "README architecture summary is missing"
 Assert-True ($readme.Contains('No scheduled task')) "README does not state that background repair is disabled"
 Assert-True ($readme.Contains('Repair RTL')) "README does not explain the repair shortcut"
+Assert-True ($readme.Contains('persistent in-place ASAR patch')) "README does not explain persistent GPT support"
 Assert-True ($thirdParty.Contains('Copyright (c) 2026 RT-AI')) "Original MIT attribution is missing"
 Assert-True ($thirdParty.Contains('Copyright (c) 2026 shraga100')) "Pinned Claude engine attribution is missing"
 Assert-True ($readme -notmatch '[\u0590-\u05FF\uFB1D-\uFB4F]') "README must be entirely English"

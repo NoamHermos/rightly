@@ -1,10 +1,13 @@
 <#
-Rightly GPT Work / Codex RTL runtime installer for Windows.
+.SYNOPSIS
+Applies persistent Rightly RTL support to the official GPT Work / Codex app.
 
-The official OpenAI package remains untouched. Rightly starts the official
-ChatGPT.exe with a loopback-only Chromium DevTools endpoint and injects the RTL
-payload into memory during application startup. This works with MSIX package
-integrity and avoids creating or rebuilding an application copy.
+.DESCRIPTION
+The official Microsoft Store package is patched in place by rebuilding only
+its external app.asar. The original ASAR is backed up with package and hash
+metadata so uninstall and failed-install rollback never restore across app
+versions. No copied application, DevTools endpoint, watcher, or runtime
+injector is required after installation.
 #>
 
 [CmdletBinding()]
@@ -19,125 +22,215 @@ param(
 
 $ErrorActionPreference = "Stop"
 $Script:ModuleRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$Script:RuntimeDir = Join-Path $env:LOCALAPPDATA "Programs\Rightly\GPT"
-$Script:RuntimeLauncher = Join-Path $Script:RuntimeDir "launch-gpt.ps1"
-$Script:RuntimeState = Join-Path $Script:RuntimeDir "state.json"
-$Script:LegacyStateDir = Join-Path $env:ProgramData "GptwRtlPatch"
-$Script:LegacyModificationName = "RT.AI.Codex.RTL.Modification"
-$Script:LegacyCertificateFriendlyName = "RT-AI GPTW RTL Modification"
+$Script:PayloadPath = Join-Path $Script:ModuleRoot "codex-rtl-payload.js"
+$Script:AsarModulePath = Join-Path $Script:ModuleRoot "lib\Rightly.GptAsar.ps1"
+$Script:StateRoot = Join-Path $env:ProgramData "Rightly\GPT"
+$Script:StatePath = Join-Path $Script:StateRoot "state.json"
+$Script:BackupPath = Join-Path $Script:StateRoot "backup\app.asar"
+$Script:LegacyRuntimeDir = Join-Path $env:LOCALAPPDATA "Programs\Rightly\GPT"
+$Script:LegacyStateDirs = @(
+    (Join-Path $env:ProgramData "GptwRtlPatch"),
+    (Join-Path $env:ProgramData "CodexRtAi")
+)
+$Script:LegacyModificationNames = @(
+    "RT.AI.Codex.RTL.Modification",
+    "OpenAI.Codex.RtAiRtl"
+)
+$Script:LegacyCertificateFriendlyNames = @(
+    "RT-AI GPTW RTL Modification",
+    "Codex RT-AI Modification Package"
+)
 $Script:LegacyTaskNames = @("Codex RT-AI RTL Auto-Update")
 $Script:LegacyCopyDirs = @(
-    (Join-Path $env:LOCALAPPDATA "Programs\Codex-RT-AI")
-    (Join-Path $env:LOCALAPPDATA "Programs\Codex-RT-AI-patcher")
+    (Join-Path $env:LOCALAPPDATA "Programs\Codex-RT-AI"),
+    (Join-Path $env:LOCALAPPDATA "Programs\Codex-RT-AI-patcher"),
     (Join-Path $env:LOCALAPPDATA "Programs\Rightly-GPT-Embedded")
 )
-$Script:RuntimeFiles = @("codex-rtl-payload.js", "gpt-rtl-cdp.js", "launch-gpt.ps1")
 
-# Console and elevation -------------------------------------------------------
-function Write-Step {
-    param([string]$Message)
-    Write-Host ""
-    Write-Host "==> $Message" -ForegroundColor Cyan
+if (-not (Test-Path -LiteralPath $Script:AsarModulePath -PathType Leaf)) {
+    throw "GPT ASAR helper is missing: $($Script:AsarModulePath)"
 }
+. $Script:AsarModulePath
 
-function Write-Ok {
-    param([string]$Message)
-    Write-Host "  [+] $Message" -ForegroundColor Green
-}
-
-function Write-Info {
-    param([string]$Message)
-    Write-Host "  [*] $Message" -ForegroundColor DarkGray
-}
-
-function Write-Warn {
-    param([string]$Message)
-    Write-Host "  [!] $Message" -ForegroundColor Yellow
-}
+# Console and process helpers ------------------------------------------------
+function Write-Step { param([string] $Message); Write-Host ""; Write-Host "==> $Message" -ForegroundColor Cyan }
+function Write-Ok { param([string] $Message); Write-Host "  [+] $Message" -ForegroundColor Green }
+function Write-Info { param([string] $Message); Write-Host "  [*] $Message" -ForegroundColor DarkGray }
+function Write-Warn { param([string] $Message); Write-Host "  [!] $Message" -ForegroundColor Yellow }
 
 function Test-IsAdministrator {
-    return ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
-        [Security.Principal.WindowsBuiltinRole]::Administrator
-    )
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = [Security.Principal.WindowsPrincipal] $identity
+    return $principal.IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)
 }
 
 function Invoke-ElevatedIfNeeded {
-    param([ValidateSet("Install", "Uninstall")][string]$Action)
+    param([ValidateSet("Install", "Uninstall")][string] $Action)
+
     if (Test-IsAdministrator) { return $false }
     if ($Elevated) { throw "Administrator rights were requested but were not granted." }
-    if (-not $PSCommandPath) { throw "Cannot elevate because the patcher has no file path." }
+    if (-not $PSCommandPath) { throw "Cannot elevate because the GPT patcher has no file path." }
 
-    Write-Step "Requesting administrator rights for one-time legacy cleanup"
+    Write-Step "Requesting administrator rights for the official GPT installation"
     $powershell = Join-Path $env:WINDIR "System32\WindowsPowerShell\v1.0\powershell.exe"
-    # The elevated child never launches GPT. The original medium-integrity
-    # process launches it after cleanup has completed.
-    $arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -$Action -Elevated -NoLaunch"
+    $arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -$Action -Elevated"
+    if ($NoLaunch) { $arguments += " -NoLaunch" }
     $process = Start-Process -FilePath $powershell -ArgumentList $arguments -Verb RunAs -Wait -PassThru
-    if ($process.ExitCode -ne 0) { throw "The elevated Rightly $Action process exited with code $($process.ExitCode)." }
+    if ($process.ExitCode -ne 0) {
+        throw "The elevated GPT $Action process exited with code $($process.ExitCode)."
+    }
     return $true
 }
 
-# Official package and process management -----------------------------------
+# Official package -----------------------------------------------------------
 function Get-OfficialCodexPackage {
     $package = Get-AppxPackage -Name "OpenAI.Codex" -ErrorAction SilentlyContinue |
         Sort-Object Version -Descending | Select-Object -First 1
     if (-not $package) { throw "The official GPT Work / Codex app is not installed." }
+
     $appDir = Join-Path $package.InstallLocation "app"
     $exe = Join-Path $appDir "ChatGPT.exe"
     $asar = Join-Path $appDir "resources\app.asar"
     foreach ($path in @($exe, $asar)) {
-        if (-not (Test-Path -LiteralPath $path)) { throw "The official GPT file is missing: $path" }
+        if (-not (Test-Path -LiteralPath $path)) { throw "Official GPT file is missing: $path" }
     }
     return [pscustomobject]@{
         Package = $package
+        PackageFullName = [string] $package.PackageFullName
+        Version = [string] $package.Version
         AppDir = [System.IO.Path]::GetFullPath($appDir)
         Exe = [System.IO.Path]::GetFullPath($exe)
         Asar = [System.IO.Path]::GetFullPath($asar)
+        AppUserModelId = "$($package.PackageFamilyName)!App"
     }
 }
 
 function Get-OfficialCodexProcesses {
-    $official = Get-OfficialCodexPackage
-    $prefix = $official.AppDir.TrimEnd('\') + '\'
+    param([string] $AppDir)
+    $prefix = [System.IO.Path]::GetFullPath($AppDir).TrimEnd('\') + '\'
     return @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
         $_.ExecutablePath -and
-        ([System.IO.Path]::GetFullPath($_.ExecutablePath)).StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)
+        ([System.IO.Path]::GetFullPath($_.ExecutablePath)).StartsWith(
+            $prefix, [System.StringComparison]::OrdinalIgnoreCase
+        )
     })
 }
 
 function Stop-OfficialCodex {
-    $processes = @(Get-OfficialCodexProcesses)
-    $main = $processes | Where-Object { $_.Name -ieq "ChatGPT.exe" -and $_.CommandLine -notmatch "--type=" } | Select-Object -First 1
+    param([string] $AppDir)
+    $processes = @(Get-OfficialCodexProcesses $AppDir)
+    $main = $processes | Where-Object {
+        $_.Name -ieq "ChatGPT.exe" -and $_.CommandLine -notmatch "--type="
+    } | Select-Object -First 1
     if ($main) {
         $process = Get-Process -Id $main.ProcessId -ErrorAction SilentlyContinue
-        if ($process) { [void]$process.CloseMainWindow() }
-        Start-Sleep -Seconds 3
+        if ($process) { [void] $process.CloseMainWindow() }
+        $deadline = (Get-Date).AddSeconds(8)
+        while (@(Get-OfficialCodexProcesses $AppDir).Count -gt 0 -and (Get-Date) -lt $deadline) {
+            Start-Sleep -Milliseconds 250
+        }
     }
-    foreach ($item in @(Get-OfficialCodexProcesses)) {
+    foreach ($item in @(Get-OfficialCodexProcesses $AppDir)) {
         Stop-Process -Id $item.ProcessId -Force -ErrorAction SilentlyContinue
     }
 }
 
-function Assert-ExactManagedPath {
-    param([string]$Path, [string[]]$AllowedPaths)
-    $full = [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
-    $allowed = @($AllowedPaths | ForEach-Object { [System.IO.Path]::GetFullPath($_).TrimEnd('\') })
-    if (-not ($allowed | Where-Object { $full.Equals($_, [System.StringComparison]::OrdinalIgnoreCase) })) {
-        throw "Refusing to remove unmanaged path: $full"
+function Start-OfficialCodex {
+    $official = Get-OfficialCodexPackage
+    if (@(Get-OfficialCodexProcesses $official.AppDir).Count -gt 0) {
+        Write-Info "Official GPT Work / Codex is already running."
+        return
     }
+
+    if (-not ("RightlyCodexActivation" -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+[ComImport, Guid("2e941141-7f97-4756-ba1d-9decde894a3d"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IRightlyApplicationActivationManager {
+    int ActivateApplication([MarshalAs(UnmanagedType.LPWStr)] string appUserModelId, [MarshalAs(UnmanagedType.LPWStr)] string arguments, uint options, out uint processId);
+    int ActivateForFile(IntPtr appUserModelId, IntPtr itemArray, IntPtr verb, out uint processId);
+    int ActivateForProtocol(IntPtr appUserModelId, IntPtr itemArray, out uint processId);
+}
+[ComImport, Guid("45BA127D-10A8-46EA-8AB7-56EA9078943C")]
+class RightlyApplicationActivationManager { }
+public static class RightlyCodexActivation {
+    public static uint Start(string appUserModelId) {
+        var manager = (IRightlyApplicationActivationManager)new RightlyApplicationActivationManager();
+        uint processId;
+        int result = manager.ActivateApplication(appUserModelId, "", 0, out processId);
+        if (result < 0) Marshal.ThrowExceptionForHR(result);
+        return processId;
+    }
+}
+'@
+    }
+
+    $processId = [RightlyCodexActivation]::Start($official.AppUserModelId)
+    $deadline = (Get-Date).AddSeconds(12)
+    do {
+        Start-Sleep -Milliseconds 300
+        $main = @(Get-OfficialCodexProcesses $official.AppDir | Where-Object {
+            $_.Name -ieq "ChatGPT.exe" -and $_.CommandLine -notmatch "--type="
+        })
+    } while ($main.Count -eq 0 -and (Get-Date) -lt $deadline)
+    if ($main.Count -eq 0) { throw "The official GPT app did not remain open after activation." }
+    Write-Ok "Launched the official persistent-patch GPT app (PID $processId)."
+}
+
+# Managed state and legacy cleanup ------------------------------------------
+function Assert-ExactManagedPath {
+    param([string] $Path, [string[]] $AllowedPaths)
+    $full = [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
+    $allowed = @($AllowedPaths | ForEach-Object {
+        [System.IO.Path]::GetFullPath($_).TrimEnd('\')
+    })
+    if (-not ($allowed | Where-Object {
+        $full.Equals($_, [System.StringComparison]::OrdinalIgnoreCase)
+    })) { throw "Refusing to remove unmanaged path: $full" }
     return $full
 }
 
 function Remove-ManagedDirectory {
-    param([string]$Path)
+    param([string] $Path)
     if (-not (Test-Path -LiteralPath $Path)) { return }
-    $allowedPaths = @($Script:RuntimeDir, $Script:LegacyStateDir) + @($Script:LegacyCopyDirs)
-    $full = Assert-ExactManagedPath -Path $Path -AllowedPaths $allowedPaths
+    $allowed = @($Script:StateRoot, $Script:LegacyRuntimeDir) +
+        @($Script:LegacyStateDirs) + @($Script:LegacyCopyDirs)
+    $full = Assert-ExactManagedPath -Path $Path -AllowedPaths $allowed
     Remove-Item -LiteralPath $full -Recurse -Force -ErrorAction Stop
 }
 
+function Read-PatchState {
+    if (-not (Test-Path -LiteralPath $Script:StatePath)) { return $null }
+    return Get-Content -LiteralPath $Script:StatePath -Raw | ConvertFrom-Json
+}
+
+function Write-PatchState {
+    param([System.Collections.IDictionary] $State)
+    New-Item -ItemType Directory -Path $Script:StateRoot -Force | Out-Null
+    $State | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $Script:StatePath -Encoding UTF8
+}
+
+function Get-VerifiedRollbackBackup {
+    param([Parameter(Mandatory)] $State)
+
+    $recorded = [System.IO.Path]::GetFullPath([string] $State.backupPath)
+    $expected = [System.IO.Path]::GetFullPath($Script:BackupPath)
+    if (-not $recorded.Equals($expected, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "The GPT rollback state points outside Rightly's managed backup path."
+    }
+    if (-not (Test-Path -LiteralPath $expected -PathType Leaf)) {
+        throw "The GPT rollback backup is missing: $expected"
+    }
+    $backupHash = (Get-FileHash -LiteralPath $expected -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($backupHash -ne [string] $State.originalHash) {
+        throw "The GPT rollback backup failed SHA-256 verification."
+    }
+    return $expected
+}
+
 function Get-ProcessesUnderPaths {
-    param([string[]]$Paths)
+    param([string[]] $Paths)
     $prefixes = @($Paths | Where-Object { $_ } | ForEach-Object {
         [System.IO.Path]::GetFullPath($_).TrimEnd('\') + '\'
     })
@@ -150,190 +243,235 @@ function Get-ProcessesUnderPaths {
     })
 }
 
-function Stop-LegacyCopiedApps {
-    $processes = @(Get-ProcessesUnderPaths $Script:LegacyCopyDirs)
-    $main = $processes | Where-Object {
-        $_.Name -ieq "ChatGPT.exe" -and $_.CommandLine -notmatch "--type="
-    } | Select-Object -First 1
-    if ($main) {
-        $process = Get-Process -Id $main.ProcessId -ErrorAction SilentlyContinue
-        if ($process) { [void]$process.CloseMainWindow() }
-        $deadline = (Get-Date).AddSeconds(8)
-        while (@(Get-ProcessesUnderPaths $Script:LegacyCopyDirs).Count -gt 0 -and (Get-Date) -lt $deadline) {
-            Start-Sleep -Milliseconds 250
-        }
-    }
+function Remove-LegacyCopiedApps {
     foreach ($item in @(Get-ProcessesUnderPaths $Script:LegacyCopyDirs)) {
         Stop-Process -Id $item.ProcessId -Force -ErrorAction SilentlyContinue
     }
-}
 
-# Migration cleanup ----------------------------------------------------------
-function Remove-LegacyCopyShortcuts {
     $prefixes = @($Script:LegacyCopyDirs | ForEach-Object {
         [System.IO.Path]::GetFullPath($_).TrimEnd('\') + '\'
     })
     $shell = New-Object -ComObject WScript.Shell
-    $shortcutFolders = @(
-        [Environment]::GetFolderPath("Desktop")
-        [Environment]::GetFolderPath("Programs")
-        (Join-Path $env:APPDATA "Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar")
+    foreach ($folder in @(
+        [Environment]::GetFolderPath("Desktop"),
+        [Environment]::GetFolderPath("Programs"),
+        (Join-Path $env:APPDATA "Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar"),
         (Join-Path $env:APPDATA "Microsoft\Internet Explorer\Quick Launch\User Pinned\StartMenu")
-    )
-    foreach ($folder in $shortcutFolders) {
+    )) {
         foreach ($file in @(Get-ChildItem -LiteralPath $folder -Filter "*.lnk" -Force -ErrorAction SilentlyContinue)) {
-            $shortcut = $shell.CreateShortcut($file.FullName)
-            $combined = ([string]$shortcut.TargetPath) + " " + ([string]$shortcut.Arguments)
-            $isLegacy = @($prefixes | Where-Object {
-                $combined.IndexOf($_.TrimEnd('\'), [System.StringComparison]::OrdinalIgnoreCase) -ge 0
-            }).Count -gt 0
-            if ($isLegacy) {
-                Remove-Item -LiteralPath $file.FullName -Force -ErrorAction Stop
-                Write-Info "Removed copied-app shortcut: $($file.FullName)"
-            }
+            try {
+                $target = [System.IO.Path]::GetFullPath($shell.CreateShortcut($file.FullName).TargetPath)
+                if ($prefixes | Where-Object {
+                    $target.StartsWith($_, [System.StringComparison]::OrdinalIgnoreCase)
+                }) {
+                    Remove-Item -LiteralPath $file.FullName -Force -ErrorAction Stop
+                    Write-Info "Removed obsolete copied-app shortcut: $($file.FullName)"
+                }
+            } catch { }
         }
     }
-}
 
-function Remove-LegacyCopiedApps {
-    Stop-LegacyCopiedApps
-    Remove-LegacyCopyShortcuts
     foreach ($path in $Script:LegacyCopyDirs) {
         if (Test-Path -LiteralPath $path) {
             Remove-ManagedDirectory $path
-            Write-Info "Removed copied GPT build: $path"
+            Write-Info "Removed obsolete copied GPT build: $path"
         }
     }
 }
 
-function Remove-LegacyAutomaticPatching {
-    if (-not (Get-Command Get-ScheduledTask -ErrorAction SilentlyContinue)) { return }
-    foreach ($name in $Script:LegacyTaskNames) {
-        $task = Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
-        if ($task) {
-            Stop-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
-            Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction Stop
-            Write-Info "Removed legacy automatic task: $name"
+function Remove-LegacyRuntime {
+    Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -match '(?i)gpt-rtl-cdp\.js' } |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    if (Test-Path -LiteralPath $Script:LegacyRuntimeDir) {
+        Remove-ManagedDirectory $Script:LegacyRuntimeDir
+        Write-Info "Removed the obsolete in-memory GPT runtime."
+    }
+    if (Get-Command Get-ScheduledTask -ErrorAction SilentlyContinue) {
+        foreach ($name in $Script:LegacyTaskNames) {
+            $task = Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
+            if ($task) {
+                Stop-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
+                Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction Stop
+                Write-Info "Removed legacy automatic task: $name"
+            }
         }
     }
 }
 
 function Remove-LegacyModificationPackage {
-    $packages = @(Get-AppxPackage -Name $Script:LegacyModificationName -PackageTypeFilter Optional -ErrorAction SilentlyContinue)
-    if ($packages.Count -gt 0) {
-        Stop-OfficialCodex
+    foreach ($name in $Script:LegacyModificationNames) {
+        $packages = @(Get-AppxPackage -Name $name -PackageTypeFilter Optional -ErrorAction SilentlyContinue)
         foreach ($package in $packages) {
             Remove-AppxPackage -Package $package.PackageFullName -ErrorAction Stop
             Write-Info "Removed ineffective legacy MSIX overlay: $($package.PackageFullName)"
         }
     }
-    Remove-ManagedDirectory $Script:LegacyStateDir
+    foreach ($path in $Script:LegacyStateDirs) { Remove-ManagedDirectory $path }
 
     foreach ($storePath in @(
-        "Cert:\CurrentUser\My",
-        "Cert:\CurrentUser\Root",
-        "Cert:\CurrentUser\TrustedPeople",
-        "Cert:\LocalMachine\Root",
-        "Cert:\LocalMachine\TrustedPeople"
+        "Cert:\CurrentUser\My", "Cert:\CurrentUser\Root", "Cert:\CurrentUser\TrustedPeople",
+        "Cert:\LocalMachine\Root", "Cert:\LocalMachine\TrustedPeople"
     )) {
         Get-ChildItem $storePath -ErrorAction SilentlyContinue |
-            Where-Object { $_.FriendlyName -eq $Script:LegacyCertificateFriendlyName } |
-            ForEach-Object {
-                Remove-Item -LiteralPath $_.PSPath -Force -ErrorAction Stop
-                Write-Info "Removed obsolete Rightly signing certificate from $storePath"
-            }
+            Where-Object { $_.FriendlyName -in $Script:LegacyCertificateFriendlyNames } |
+            ForEach-Object { Remove-Item -LiteralPath $_.PSPath -Force -ErrorAction Stop }
     }
 }
 
-# Runtime deployment ---------------------------------------------------------
-function Copy-RuntimeFile {
-    param([string]$Name)
-    $source = Join-Path $Script:ModuleRoot $Name
-    $destination = Join-Path $Script:RuntimeDir $Name
-    if (-not (Test-Path -LiteralPath $source)) { throw "Rightly source file is missing: $source" }
-    $sourceFull = [System.IO.Path]::GetFullPath($source)
-    $destinationFull = [System.IO.Path]::GetFullPath($destination)
-    if (-not $sourceFull.Equals($destinationFull, [System.StringComparison]::OrdinalIgnoreCase)) {
-        Copy-Item -LiteralPath $sourceFull -Destination $destinationFull -Force
-    }
+# In-place ASAR installation ------------------------------------------------
+function Grant-AsarWriteAccess {
+    param([string] $AsarPath)
+    if (-not (Test-IsAdministrator)) { throw "Administrator rights are required to patch the official GPT ASAR." }
+    & (Join-Path $env:WINDIR "System32\takeown.exe") /F $AsarPath /A | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Could not take ownership of the official GPT ASAR." }
+    & (Join-Path $env:WINDIR "System32\icacls.exe") $AsarPath /grant '*S-1-5-32-544:(F)' /C | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Could not grant write access to the official GPT ASAR." }
 }
 
-function Deploy-RightlyRuntime {
+function Get-OriginalAsarForInstall {
+    param([pscustomobject] $Official)
+
+    $state = Read-PatchState
+    $currentHash = (Get-FileHash -LiteralPath $Official.Asar -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($state -and $state.packageFullName -eq $Official.PackageFullName) {
+        $backup = Get-VerifiedRollbackBackup $state
+
+        if ($currentHash -eq [string] $state.patchedHash) {
+            Write-Info "Restoring the verified original before refreshing the Rightly payload."
+            Grant-AsarWriteAccess $Official.Asar
+            Copy-Item -LiteralPath $backup -Destination $Official.Asar -Force
+            return $backup
+        }
+        if ($currentHash -eq [string] $state.originalHash) { return $backup }
+        throw "The official GPT ASAR changed unexpectedly. Update or repair GPT from Microsoft Store, then run Rightly again."
+    }
+
+    if ($state) {
+        Write-Info "Detected a new official GPT package; replacing the obsolete version-specific backup."
+        Remove-ManagedDirectory $Script:StateRoot
+    }
+    New-Item -ItemType Directory -Path (Split-Path -Parent $Script:BackupPath) -Force | Out-Null
+    Copy-Item -LiteralPath $Official.Asar -Destination $Script:BackupPath -Force
+    $backupHash = (Get-FileHash -LiteralPath $Script:BackupPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($backupHash -ne $currentHash) { throw "The GPT rollback backup failed verification after copying." }
+    return $Script:BackupPath
+}
+
+function Install-PersistentCodexPatch {
+    if (Invoke-ElevatedIfNeeded "Install") { return }
+    if (-not (Test-Path -LiteralPath $Script:PayloadPath)) { throw "RTL payload is missing: $($Script:PayloadPath)" }
+    $npx = Get-RightlyToolPath @("npx.cmd")
+    if (-not $npx) { throw "Node.js with npx is required during GPT installation and repair." }
+
     $official = Get-OfficialCodexPackage
-    New-Item -ItemType Directory -Path $Script:RuntimeDir -Force | Out-Null
-    foreach ($name in $Script:RuntimeFiles) { Copy-RuntimeFile $name }
-    [ordered]@{
-        architecture = "loopback-cdp-runtime"
-        officialPackageFullName = $official.Package.PackageFullName
-        officialPackageVersion = [string]$official.Package.Version
-        installedAt = (Get-Date).ToString("o")
-    } | ConvertTo-Json | Set-Content -LiteralPath $Script:RuntimeState -Encoding UTF8
-    Write-Ok "Installed lightweight Rightly runtime at $($Script:RuntimeDir)"
-}
-
-function Start-RightlyCodex {
-    if (-not (Test-Path -LiteralPath $Script:RuntimeLauncher)) { Deploy-RightlyRuntime }
-    $powershell = Join-Path $env:WINDIR "System32\WindowsPowerShell\v1.0\powershell.exe"
-    $process = Start-Process -FilePath $powershell -ArgumentList @(
-        "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
-        "-File", "`"$Script:RuntimeLauncher`""
-    ) -PassThru
-    $process.WaitForExit()
-    if ($process.ExitCode -ne 0) {
-        $runtimeLog = Join-Path $Script:RuntimeDir "logs\gpt-runtime.log"
-        throw "GPT opened without a verified Rightly payload. See $runtimeLog"
-    }
-    Write-Ok "GPT Work / Codex RTL payload injected and verified successfully."
-}
-
-# Public actions -------------------------------------------------------------
-function Install-RightlyRuntime {
-    if (Invoke-ElevatedIfNeeded "Install") {
-        if (-not $NoLaunch) { Start-RightlyCodex }
-        return
-    }
-    Write-Step "Removing the ineffective MSIX overlay and its large build cache"
-    Remove-LegacyAutomaticPatching
-    Remove-LegacyModificationPackage
-    Write-Step "Removing obsolete copied GPT builds"
+    Write-Step "Closing the official GPT app"
+    Stop-OfficialCodex $official.AppDir
+    Remove-LegacyRuntime
     Remove-LegacyCopiedApps
-    Write-Step "Installing the lightweight in-memory Rightly runtime"
-    Deploy-RightlyRuntime
+    Remove-LegacyModificationPackage
+
+    $originalAsar = Get-OriginalAsarForInstall $official
+    $originalHash = (Get-FileHash -LiteralPath $originalAsar -Algorithm SHA256).Hash.ToLowerInvariant()
+    $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("rightly-gpt-asar-" + [guid]::NewGuid().ToString("N"))
+    $patchedAsar = Join-Path $tempRoot "app.asar"
+
+    try {
+        New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+        $build = New-RightlyGptAsar -SourceAsar $originalAsar -DestinationAsar $patchedAsar `
+            -PayloadPath $Script:PayloadPath -NpxPath $npx
+        $patchedHash = $build.Sha256
+        if ($patchedHash -eq $originalHash) { throw "The patched ASAR hash did not change." }
+
+        Write-Step "Installing the persistent patch into the official GPT package"
+        Grant-AsarWriteAccess $official.Asar
+        Copy-Item -LiteralPath $patchedAsar -Destination $official.Asar -Force
+        $installedHash = (Get-FileHash -LiteralPath $official.Asar -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($installedHash -ne $patchedHash) { throw "The installed GPT ASAR failed SHA-256 verification." }
+
+        Write-PatchState ([ordered]@{
+            architecture = "official-in-place-asar"
+            packageFullName = $official.PackageFullName
+            packageVersion = $official.Version
+            asarPath = $official.Asar
+            backupPath = $Script:BackupPath
+            originalHash = $originalHash
+            patchedHash = $patchedHash
+            payloadHash = (Get-FileHash -LiteralPath $Script:PayloadPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            installedAt = (Get-Date).ToString("o")
+        })
+        Write-Ok "GPT was patched in place. Normal future launches will keep Rightly active."
+    } catch {
+        if (Test-Path -LiteralPath $originalAsar) {
+            try {
+                Grant-AsarWriteAccess $official.Asar
+                Copy-Item -LiteralPath $originalAsar -Destination $official.Asar -Force
+                Write-Warn "The original GPT ASAR was restored after the failed patch."
+            } catch { }
+        }
+        throw
+    } finally {
+        if (Test-Path -LiteralPath $tempRoot) {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     if ($NoLaunch) { Write-Info "Launch deferred to the unified installer." }
-    else { Start-RightlyCodex }
+    else { Start-OfficialCodex }
 }
 
-function Uninstall-RightlyRuntime {
+function Uninstall-PersistentCodexPatch {
     if (Invoke-ElevatedIfNeeded "Uninstall") { return }
-    Stop-OfficialCodex
-    Remove-LegacyAutomaticPatching
-    Remove-LegacyModificationPackage
-    Remove-LegacyCopiedApps
-    Remove-ManagedDirectory $Script:RuntimeDir
-    foreach ($name in @("Repair GPT RTL.lnk", "Rightly GPT.lnk")) {
-        Remove-Item -LiteralPath (Join-Path ([Environment]::GetFolderPath("Desktop")) $name) -Force -ErrorAction SilentlyContinue
+    $official = Get-OfficialCodexPackage
+    Stop-OfficialCodex $official.AppDir
+    $state = Read-PatchState
+
+    if ($state -and $state.packageFullName -eq $official.PackageFullName) {
+        $backup = Get-VerifiedRollbackBackup $state
+        $currentHash = (Get-FileHash -LiteralPath $official.Asar -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($currentHash -eq [string] $state.patchedHash) {
+            Grant-AsarWriteAccess $official.Asar
+            Copy-Item -LiteralPath $backup -Destination $official.Asar -Force
+            Write-Ok "Restored the original official GPT ASAR."
+        } elseif ($currentHash -ne [string] $state.originalHash) {
+            throw "The GPT ASAR changed unexpectedly; the verified backup was kept at $backup"
+        }
+    } elseif ($state) {
+        Write-Info "The official GPT package was updated; its current files were not modified by uninstall."
     }
-    Write-Ok "Rightly was removed. The official OpenAI app remains installed and untouched."
+
+    Remove-ManagedDirectory $Script:StateRoot
+    Remove-LegacyRuntime
+    Remove-LegacyCopiedApps
+    Remove-LegacyModificationPackage
+    Write-Ok "Rightly was removed. The official GPT app remains installed."
 }
 
-function Show-RightlyStatus {
+function Show-PersistentCodexStatus {
     $official = Get-OfficialCodexPackage
-    $runtimeProcesses = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
-        $_.Name -ieq "node.exe" -and $_.CommandLine -match "gpt-rtl-cdp\.js"
-    })
+    $state = Read-PatchState
     Write-Host ""
     Write-Host "Rightly for GPT Work / Codex - Status" -ForegroundColor Cyan
-    Write-Info "Official package: $($official.Package.PackageFullName)"
-    if (Test-Path -LiteralPath $Script:RuntimeState) { Write-Ok "Runtime installed: $($Script:RuntimeDir)" }
-    else { Write-Warn "Rightly runtime is not installed." }
-    if ($runtimeProcesses.Count -gt 0) { Write-Ok "In-memory injector is running (PID $($runtimeProcesses[0].ProcessId))." }
-    else { Write-Warn "GPT is not currently running through the Rightly shortcut." }
-    $legacy = @(Get-AppxPackage -Name $Script:LegacyModificationName -PackageTypeFilter Optional -ErrorAction SilentlyContinue)
-    if ($legacy.Count -eq 0) { Write-Ok "No legacy MSIX overlay is installed." }
-    else { Write-Warn "The legacy MSIX overlay is still installed." }
-    $copies = @($Script:LegacyCopyDirs | Where-Object { Test-Path -LiteralPath $_ })
-    if ($copies.Count -eq 0) { Write-Ok "No copied GPT installations exist." }
-    else { Write-Warn "Copied GPT installations still exist: $($copies -join ', ')" }
+    Write-Info "Official package: $($official.PackageFullName)"
+    if (-not $state) { Write-Warn "No persistent Rightly patch state was found."; return }
+    if ($state.packageFullName -ne $official.PackageFullName) {
+        Write-Warn "GPT was updated after Rightly was installed. Run Repair RTL once."
+        return
+    }
+    $currentHash = (Get-FileHash -LiteralPath $official.Asar -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($currentHash -eq [string] $state.patchedHash) {
+        Write-Ok "Persistent in-place RTL patch is active for GPT $($official.Version)."
+    } elseif ($currentHash -eq [string] $state.originalHash) {
+        Write-Warn "The official ASAR is currently unpatched. Run Repair RTL."
+    } else {
+        Write-Warn "The GPT ASAR does not match the recorded original or patched hash."
+    }
+    try {
+        [void] (Get-VerifiedRollbackBackup $state)
+        Write-Ok "Verified rollback backup is present."
+    } catch {
+        Write-Warn $_.Exception.Message
+    }
 }
 
 $selectedActions = @()
@@ -344,7 +482,7 @@ if ($Launch) { $selectedActions += "Launch" }
 if ($selectedActions.Count -eq 0) { $Install = $true; $selectedActions = @("Install") }
 if ($selectedActions.Count -gt 1) { throw "Choose only one action: -Install, -Uninstall, -Status, or -Launch." }
 
-if ($Install) { Install-RightlyRuntime }
-elseif ($Uninstall) { Uninstall-RightlyRuntime }
-elseif ($Status) { Show-RightlyStatus }
-elseif ($Launch) { Start-RightlyCodex }
+if ($Install) { Install-PersistentCodexPatch }
+elseif ($Uninstall) { Uninstall-PersistentCodexPatch }
+elseif ($Status) { Show-PersistentCodexStatus }
+elseif ($Launch) { Start-OfficialCodex }

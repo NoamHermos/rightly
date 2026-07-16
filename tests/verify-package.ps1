@@ -33,8 +33,7 @@ try {
         "assets\rightly.ico",
         "src\gpt\patch.ps1",
         "src\gpt\codex-rtl-payload.js",
-        "src\gpt\gpt-rtl-cdp.js",
-        "src\gpt\launch-gpt.ps1",
+        "src\gpt\lib\Rightly.GptAsar.ps1",
         "src\claude\patch.ps1",
         "src\claude\claude-rtl-payload.js"
     )

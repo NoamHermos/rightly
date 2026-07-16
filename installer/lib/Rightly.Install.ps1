@@ -174,12 +174,15 @@ function Install-RightlyRepairBundle {
         "assets\rightly.ico",
         "src\gpt\patch.ps1",
         "src\gpt\codex-rtl-payload.js",
-        "src\gpt\gpt-rtl-cdp.js",
-        "src\gpt\launch-gpt.ps1",
+        "src\gpt\lib\Rightly.GptAsar.ps1",
         "src\claude\patch.ps1",
         "src\claude\claude-rtl-payload.js"
     )) {
         Copy-RightlyRepairFile $relative
+    }
+    foreach ($obsolete in @("src\gpt\gpt-rtl-cdp.js", "src\gpt\launch-gpt.ps1")) {
+        Remove-Item -LiteralPath (Join-Path $Script:RightlyRepairDir $obsolete) `
+            -Force -ErrorAction SilentlyContinue
     }
     Remove-RightlyLegacyRepairBundle
     Write-RightlyOk "Repair command installed at $($Script:RightlyRepairDir)"

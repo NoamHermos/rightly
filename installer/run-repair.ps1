@@ -29,7 +29,7 @@ function Show-RightlySuccess {
     try {
         Add-Type -AssemblyName System.Windows.Forms
         [void][System.Windows.Forms.MessageBox]::Show(
-            "Every selected application completed successfully.`r`n`r`nWhen GPT was selected, its RTL payload marker was injected and verified before this message was shown.",
+            "Every selected application completed successfully.`r`n`r`nWhen GPT was selected, its persistent ASAR patch and rollback metadata were verified before this message was shown.",
             "Rightly repair completed",
             [System.Windows.Forms.MessageBoxButtons]::OK,
             [System.Windows.Forms.MessageBoxIcon]::Information
