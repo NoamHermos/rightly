@@ -37,7 +37,7 @@ Choose one target from the interactive menu:
 2. `Claude Desktop / Code`
 3. `Both`
 
-Rightly closes and reopens only the selected application. The installer also creates one desktop shortcut named **Repair RTL**, using the Rightly icon.
+Rightly force-closes the selected application's complete process tree before patching, waits for its files to be released, and then reopens only that application. Save any active work in the selected app first. The installer also creates one desktop shortcut named **Repair RTL**, using the Rightly icon.
 
 For a reviewable local installation, download the repository, inspect the scripts, and run `installer/install.bat` instead of executing the online command directly.
 

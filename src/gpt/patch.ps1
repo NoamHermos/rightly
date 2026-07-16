@@ -116,23 +116,56 @@ function Get-OfficialCodexProcesses {
     })
 }
 
+function Stop-ProcessTree {
+    param([Parameter(Mandatory)][uint32] $ProcessId)
+
+    $taskkill = Join-Path $env:WINDIR "System32\taskkill.exe"
+    & $taskkill /PID ([string] $ProcessId) /T /F *> $null
+
+    # taskkill can return before the process object disappears. Keep the
+    # PowerShell fallback so a surviving child cannot retain the ASAR handle.
+    $process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+    if ($process) {
+        Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Stop-OfficialCodex {
     param([string] $AppDir)
-    $processes = @(Get-OfficialCodexProcesses $AppDir)
-    $main = $processes | Where-Object {
-        $_.Name -ieq "ChatGPT.exe" -and $_.CommandLine -notmatch "--type="
-    } | Select-Object -First 1
-    if ($main) {
-        $process = Get-Process -Id $main.ProcessId -ErrorAction SilentlyContinue
-        if ($process) { [void] $process.CloseMainWindow() }
-        $deadline = (Get-Date).AddSeconds(8)
-        while (@(Get-OfficialCodexProcesses $AppDir).Count -gt 0 -and (Get-Date) -lt $deadline) {
-            Start-Sleep -Milliseconds 250
+
+    Write-Info "Force-closing every official GPT/Codex process and child process."
+    $deadline = (Get-Date).AddSeconds(15)
+    do {
+        # ChatGPT.exe is the official app host. Killing by image also catches a
+        # process whose protected WindowsApps path is temporarily unavailable
+        # through CIM, while the path-filtered pass safely handles codex.exe.
+        $taskkill = Join-Path $env:WINDIR "System32\taskkill.exe"
+        & $taskkill /IM "ChatGPT.exe" /T /F *> $null
+        Get-Process -Name "ChatGPT" -ErrorAction SilentlyContinue |
+            Stop-Process -Force -ErrorAction SilentlyContinue
+
+        $processes = @(Get-OfficialCodexProcesses $AppDir)
+        if ($processes.Count -eq 0) { break }
+
+        $officialIds = @($processes | ForEach-Object { [uint32] $_.ProcessId })
+        $roots = @($processes | Where-Object {
+            $officialIds -notcontains [uint32] $_.ParentProcessId
+        })
+        foreach ($item in @($roots + $processes | Sort-Object ProcessId -Unique)) {
+            Stop-ProcessTree -ProcessId ([uint32] $item.ProcessId)
         }
+        Start-Sleep -Milliseconds 300
+    } while ((Get-Date) -lt $deadline)
+
+    $remaining = @(Get-OfficialCodexProcesses $AppDir)
+    if ($remaining.Count -gt 0) {
+        $ids = ($remaining | Select-Object -ExpandProperty ProcessId) -join ", "
+        throw "Could not stop every official GPT/Codex process. Remaining process ids: $ids"
     }
-    foreach ($item in @(Get-OfficialCodexProcesses $AppDir)) {
-        Stop-Process -Id $item.ProcessId -Force -ErrorAction SilentlyContinue
-    }
+
+    # Electron and Crashpad may release their final mapped-file handles shortly
+    # after the processes disappear from the process table.
+    Start-Sleep -Milliseconds 750
 }
 
 function Start-OfficialCodex {
@@ -338,26 +371,44 @@ function Grant-AsarWriteAccess {
 function Assert-AsarCanBeReplaced {
     param([string] $AsarPath)
 
-    try {
-        $stream = [System.IO.File]::Open(
-            $AsarPath,
-            [System.IO.FileMode]::Open,
-            [System.IO.FileAccess]::ReadWrite,
-            [System.IO.FileShare]::None
-        )
-        $stream.Close()
-    } catch {
-        $processHint = ""
+    $deadline = (Get-Date).AddSeconds(10)
+    do {
+        $stream = $null
+        try {
+            $stream = [System.IO.File]::Open(
+                $AsarPath,
+                [System.IO.FileMode]::Open,
+                [System.IO.FileAccess]::ReadWrite,
+                [System.IO.FileShare]::None
+            )
+            return
+        } catch {
+            $lastError = $_.Exception.Message
+        } finally {
+            if ($stream) { $stream.Dispose() }
+        }
+
+        # If Windows restarted a package process during the hand-off, terminate
+        # it again and keep polling until the ASAR handle is actually released.
         try {
             $official = Get-OfficialCodexPackage
-            $processes = @(Get-OfficialCodexProcesses $official.AppDir)
-            if ($processes.Count -gt 0) {
-                $ids = ($processes | Select-Object -ExpandProperty ProcessId) -join ", "
-                $processHint = " Remaining GPT/Codex process ids: $ids."
+            if (@(Get-OfficialCodexProcesses $official.AppDir).Count -gt 0) {
+                Stop-OfficialCodex $official.AppDir
             }
         } catch { }
-        throw "Rightly could not replace GPT's app.asar. Close every GPT Work / Codex window and any Codex task still running, then run Repair RTL again.$processHint Original error: $($_.Exception.Message)"
-    }
+        Start-Sleep -Milliseconds 350
+    } while ((Get-Date) -lt $deadline)
+
+    $processHint = ""
+    try {
+        $official = Get-OfficialCodexPackage
+        $processes = @(Get-OfficialCodexProcesses $official.AppDir)
+        if ($processes.Count -gt 0) {
+            $ids = ($processes | Select-Object -ExpandProperty ProcessId) -join ", "
+            $processHint = " Remaining GPT/Codex process ids: $ids."
+        }
+    } catch { }
+    throw "Rightly force-closed GPT/Codex but Windows still did not release GPT's app.asar.$processHint Original error: $lastError"
 }
 
 function Copy-VerifiedAsar {

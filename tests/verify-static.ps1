@@ -106,6 +106,8 @@ Assert-True (-not $patcher.Contains('architecture = "embedded-app-copy"')) "Acti
 Assert-True ($patcher.Contains('Grant-AsarWriteAccess')) "GPT in-place installation is missing"
 Assert-True ($patcher.Contains('Assert-AsarCanBeReplaced')) "GPT ASAR replacement preflight is missing"
 Assert-True ($patcher.Contains('Copy-VerifiedAsar')) "GPT ASAR replacement verification is missing"
+Assert-True ($patcher.Contains('/IM "ChatGPT.exe" /T /F')) "GPT process-tree force close is missing"
+Assert-True ($patcher.Contains('Stop-ProcessTree')) "Official Codex child process-tree cleanup is missing"
 Assert-True ($patcher.Contains('rollback backup failed SHA-256 verification')) "GPT rollback validation is missing"
 Assert-True ($patcher.Contains('return $Official.Asar')) "GPT ASAR source is detached from app.asar.unpacked"
 Assert-True (-not $patcher.Contains('return $backup')) "GPT still builds from the detached rollback backup"
