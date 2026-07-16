@@ -58,6 +58,34 @@ function Write-Ok { param([string] $Message); Write-Host "  [+] $Message" -Foreg
 function Write-Info { param([string] $Message); Write-Host "  [*] $Message" -ForegroundColor DarkGray }
 function Write-Warn { param([string] $Message); Write-Host "  [!] $Message" -ForegroundColor Yellow }
 
+function Invoke-NativeUtility {
+    param(
+        [Parameter(Mandatory)][string] $FilePath,
+        [Parameter(Mandatory)][string[]] $Arguments,
+        [string] $FailureMessage = "Native utility failed",
+        [switch] $IgnoreExitCode
+    )
+
+    # Windows PowerShell 5.1 turns text written to a native program's stderr
+    # into an error record. Capture it with a non-terminating preference and
+    # make the actual process exit code the single source of truth.
+    $previousPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $output = @(& $FilePath @Arguments 2>&1)
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
+
+    if (-not $IgnoreExitCode -and $exitCode -ne 0) {
+        $details = (@($output | ForEach-Object { [string] $_ }) -join " ").Trim()
+        if ($details) { throw "$FailureMessage (exit code $exitCode): $details" }
+        throw "$FailureMessage (exit code $exitCode)."
+    }
+    return $exitCode
+}
+
 function Test-IsAdministrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = [Security.Principal.WindowsPrincipal] $identity
@@ -119,8 +147,10 @@ function Get-OfficialCodexProcesses {
 function Stop-ProcessTree {
     param([Parameter(Mandatory)][uint32] $ProcessId)
 
+    if (-not (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)) { return }
     $taskkill = Join-Path $env:WINDIR "System32\taskkill.exe"
-    & $taskkill /PID ([string] $ProcessId) /T /F *> $null
+    [void] (Invoke-NativeUtility -FilePath $taskkill `
+        -Arguments @("/PID", [string] $ProcessId, "/T", "/F") -IgnoreExitCode)
 
     # taskkill can return before the process object disappears. Keep the
     # PowerShell fallback so a surviving child cannot retain the ASAR handle.
@@ -133,17 +163,15 @@ function Stop-ProcessTree {
 function Stop-OfficialCodex {
     param([string] $AppDir)
 
+    $processes = @(Get-OfficialCodexProcesses $AppDir)
+    if ($processes.Count -eq 0) {
+        Write-Info "The official GPT/Codex app is already closed."
+        return
+    }
+
     Write-Info "Force-closing every official GPT/Codex process and child process."
     $deadline = (Get-Date).AddSeconds(15)
     do {
-        # ChatGPT.exe is the official app host. Killing by image also catches a
-        # process whose protected WindowsApps path is temporarily unavailable
-        # through CIM, while the path-filtered pass safely handles codex.exe.
-        $taskkill = Join-Path $env:WINDIR "System32\taskkill.exe"
-        & $taskkill /IM "ChatGPT.exe" /T /F *> $null
-        Get-Process -Name "ChatGPT" -ErrorAction SilentlyContinue |
-            Stop-Process -Force -ErrorAction SilentlyContinue
-
         $processes = @(Get-OfficialCodexProcesses $AppDir)
         if ($processes.Count -eq 0) { break }
 
@@ -151,8 +179,15 @@ function Stop-OfficialCodex {
         $roots = @($processes | Where-Object {
             $officialIds -notcontains [uint32] $_.ParentProcessId
         })
-        foreach ($item in @($roots + $processes | Sort-Object ProcessId -Unique)) {
+        if ($roots.Count -eq 0) { $roots = $processes }
+        foreach ($item in @($roots | Sort-Object ProcessId -Unique)) {
             Stop-ProcessTree -ProcessId ([uint32] $item.ProcessId)
+        }
+
+        # A crash reporter may outlive its original parent. Refresh the list
+        # and terminate any such package-scoped survivor directly.
+        foreach ($item in @(Get-OfficialCodexProcesses $AppDir)) {
+            Stop-Process -Id $item.ProcessId -Force -ErrorAction SilentlyContinue
         }
         Start-Sleep -Milliseconds 300
     } while ((Get-Date) -lt $deadline)
@@ -356,13 +391,26 @@ function Remove-LegacyModificationPackage {
 function Grant-AsarWriteAccess {
     param([string] $AsarPath)
     if (-not (Test-IsAdministrator)) { throw "Administrator rights are required to patch the official GPT ASAR." }
+
     $resourcesDir = Split-Path -Parent $AsarPath
-    & (Join-Path $env:WINDIR "System32\takeown.exe") /F $AsarPath /A | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "Could not take ownership of the official GPT ASAR." }
-    & (Join-Path $env:WINDIR "System32\icacls.exe") $AsarPath /grant '*S-1-5-32-544:(F)' /C | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "Could not grant write access to the official GPT ASAR." }
-    & (Join-Path $env:WINDIR "System32\icacls.exe") $resourcesDir /grant '*S-1-5-32-544:(M)' /C | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "Could not grant write access to the official GPT resources folder." }
+    $takeown = Join-Path $env:WINDIR "System32\takeown.exe"
+    $icacls = Join-Path $env:WINDIR "System32\icacls.exe"
+    $userSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+
+    # Newer WindowsApps packages enforce the parent directory ACL in addition
+    # to the target file ACL. Own and grant both objects before the write, while
+    # keeping the scope limited to resources and app.asar (never the package).
+    [void] (Invoke-NativeUtility -FilePath $takeown -Arguments @("/F", $resourcesDir, "/A") `
+        -FailureMessage "Could not take ownership of the official GPT resources folder")
+    [void] (Invoke-NativeUtility -FilePath $takeown -Arguments @("/F", $AsarPath, "/A") `
+        -FailureMessage "Could not take ownership of the official GPT ASAR")
+    [void] (Invoke-NativeUtility -FilePath $icacls `
+        -Arguments @($resourcesDir, "/grant", '*S-1-5-32-544:(F)', "*$userSid`:(F)") `
+        -FailureMessage "Could not grant write access to the official GPT resources folder")
+    [void] (Invoke-NativeUtility -FilePath $icacls `
+        -Arguments @($AsarPath, "/grant", '*S-1-5-32-544:(F)', "*$userSid`:(F)") `
+        -FailureMessage "Could not grant write access to the official GPT ASAR")
+
     try {
         Set-ItemProperty -LiteralPath $AsarPath -Name IsReadOnly -Value $false -ErrorAction Stop
     } catch { }
@@ -408,7 +456,7 @@ function Assert-AsarCanBeReplaced {
             $processHint = " Remaining GPT/Codex process ids: $ids."
         }
     } catch { }
-    throw "Rightly force-closed GPT/Codex but Windows still did not release GPT's app.asar.$processHint Original error: $lastError"
+    throw "Rightly force-closed GPT/Codex and prepared the WindowsApps permissions, but still could not obtain exclusive write access to GPT's app.asar.$processHint Original error: $lastError"
 }
 
 function Copy-VerifiedAsar {
