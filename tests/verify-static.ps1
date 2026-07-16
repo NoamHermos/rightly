@@ -135,6 +135,7 @@ Assert-True ($onlineInstaller.Contains('$installerArguments += "-RepairMode"')) 
 Assert-True ($repair.Contains('Start-Transcript')) "Repair failures are not logged"
 Assert-True ($repair.Contains('Show-RightlySuccess')) "Repair does not end with a clear success result"
 Assert-True ($installer.Contains('-IsolateApplicationOutput')) "Claude output can appear after the repair result"
+Assert-True ($installerModule.Contains('$launcherExitCode = $LASTEXITCODE')) "Isolated Claude launch does not preserve its real exit code"
 Assert-True ($uninstaller.Contains('Select-RightlyTarget -Operation "uninstall"')) "Unified uninstall menu is missing"
 
 # Claude stays in-place, verifies the pinned engine, and removes legacy watchers.

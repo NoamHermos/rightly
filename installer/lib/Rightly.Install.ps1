@@ -133,13 +133,11 @@ function Invoke-RightlyOfficialLauncher {
         $safeName = ($Name -replace '[^A-Za-z0-9]+', '-').Trim('-').ToLowerInvariant()
         $stdoutLog = Join-Path $logDir "$safeName-launch.stdout.log"
         $stderrLog = Join-Path $logDir "$safeName-launch.stderr.log"
-        $arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$Path`" -Launch"
-        $process = Start-Process -FilePath (Get-RightlyPowerShellPath) `
-            -ArgumentList $arguments -WindowStyle Hidden -PassThru `
-            -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog
-        $process.WaitForExit()
-        if ($process.ExitCode -ne 0) {
-            throw "$Name launcher exited with code $($process.ExitCode). See $stderrLog"
+        & (Get-RightlyPowerShellPath) -NoProfile -ExecutionPolicy Bypass `
+            -File $Path -Launch 1> $stdoutLog 2> $stderrLog
+        $launcherExitCode = $LASTEXITCODE
+        if ($launcherExitCode -ne 0) {
+            throw "$Name launcher exited with code $launcherExitCode. See $stderrLog"
         }
     } else {
         & (Get-RightlyPowerShellPath) -NoProfile -ExecutionPolicy Bypass -File $Path -Launch
