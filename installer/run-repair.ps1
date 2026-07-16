@@ -29,7 +29,7 @@ function Show-RightlySuccess {
     try {
         Add-Type -AssemblyName System.Windows.Forms
         [void][System.Windows.Forms.MessageBox]::Show(
-            "Every selected application completed successfully.`r`n`r`nWhen GPT was selected, its persistent ASAR patch and rollback metadata were verified before this message was shown.",
+            "Every selected application completed successfully.`r`n`r`nWhen GPT was selected, Rightly verified either its persistent ASAR patch or its protected-package launch-time payload before this message was shown.",
             "Rightly repair completed",
             [System.Windows.Forms.MessageBoxButtons]::OK,
             [System.Windows.Forms.MessageBoxIcon]::Information
@@ -41,8 +41,10 @@ function Show-RightlySuccess {
 }
 
 $succeeded = $false
+$transcribing = $false
 try {
     Start-Transcript -LiteralPath $logPath -Force | Out-Null
+    $transcribing = $true
     if (-not (Test-Path -LiteralPath $onlineInstaller)) {
         throw "Rightly online installer is missing: $onlineInstaller"
     }
@@ -54,18 +56,28 @@ try {
     & $onlineInstaller -Repo "NoamHermos/rightly" -Branch "main" -Target $Target -RepairMode
     $succeeded = $true
 } catch {
-    try { Add-Content -LiteralPath $logPath -Value "$(Get-Date -Format o) FATAL $($_.Exception.Message)" -Encoding UTF8 } catch { }
+    $failure = $_
+    # The transcript owns an exclusive handle to its log. Close it before the
+    # concise fatal append so logging cannot hide the actual installer failure
+    # behind a second "file is being used by another process" error.
+    if ($transcribing) {
+        try { Stop-Transcript | Out-Null } catch { }
+        $transcribing = $false
+    }
+    try { Add-Content -LiteralPath $logPath -Value "$(Get-Date -Format o) FATAL $($failure.Exception.Message)" -Encoding UTF8 } catch { }
     try {
         Add-Type -AssemblyName System.Windows.Forms
         [void][System.Windows.Forms.MessageBox]::Show(
-            "$($_.Exception.Message)`r`n`r`nThe full log was saved at:`r`n$logPath",
+            "$($failure.Exception.Message)`r`n`r`nThe full log was saved at:`r`n$logPath",
             "Rightly repair failed",
             [System.Windows.Forms.MessageBoxButtons]::OK,
             [System.Windows.Forms.MessageBoxIcon]::Error
         )
     } catch { }
 } finally {
-    try { Stop-Transcript | Out-Null } catch { }
+    if ($transcribing) {
+        try { Stop-Transcript | Out-Null } catch { }
+    }
 }
 
 Write-Host ""

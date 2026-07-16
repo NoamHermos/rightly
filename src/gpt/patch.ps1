@@ -1,13 +1,13 @@
 <#
 .SYNOPSIS
-Applies persistent Rightly RTL support to the official GPT Work / Codex app.
+Applies verified Rightly RTL support to the official GPT Work / Codex app.
 
 .DESCRIPTION
-The official Microsoft Store package is patched in place by rebuilding only
-its external app.asar. The original ASAR is backed up with package and hash
-metadata so uninstall and failed-install rollback never restore across app
-versions. No copied application, DevTools endpoint, watcher, or runtime
-injector is required after installation.
+Rightly first attempts a persistent in-place rebuild of the official external
+app.asar and verifies the installed hash. If Windows/MSIX keeps that file
+immutable even in backup mode, Rightly leaves the package original intact and
+installs a loopback-only launch-time injector instead. Neither mode copies the
+application or installs a background watcher.
 #>
 
 [CmdletBinding()]
@@ -27,7 +27,11 @@ $Script:AsarModulePath = Join-Path $Script:ModuleRoot "lib\Rightly.GptAsar.ps1"
 $Script:StateRoot = Join-Path $env:ProgramData "Rightly\GPT"
 $Script:StatePath = Join-Path $Script:StateRoot "state.json"
 $Script:BackupPath = Join-Path $Script:StateRoot "backup\app.asar"
-$Script:LegacyRuntimeDir = Join-Path $env:LOCALAPPDATA "Programs\Rightly\GPT"
+$Script:RuntimeDir = Join-Path $env:LOCALAPPDATA "Programs\Rightly\GPT"
+$Script:RuntimeLauncher = Join-Path $Script:RuntimeDir "launch-gpt.ps1"
+$Script:RuntimeState = Join-Path $Script:RuntimeDir "state.json"
+$Script:RuntimeFiles = @("codex-rtl-payload.js", "gpt-rtl-cdp.js", "launch-gpt.ps1")
+$Script:LegacyRuntimeDir = $Script:RuntimeDir
 $Script:LegacyStateDirs = @(
     (Join-Path $env:ProgramData "GptwRtlPatch"),
     (Join-Path $env:ProgramData "CodexRtAi")
@@ -353,8 +357,10 @@ function Remove-LegacyRuntime {
         ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
     if (Test-Path -LiteralPath $Script:LegacyRuntimeDir) {
         Remove-ManagedDirectory $Script:LegacyRuntimeDir
-        Write-Info "Removed the obsolete in-memory GPT runtime."
+        Write-Info "Removed the previous launch-time GPT runtime."
     }
+    Remove-Item -LiteralPath (Join-Path ([Environment]::GetFolderPath("Desktop")) "Rightly GPT.lnk") `
+        -Force -ErrorAction SilentlyContinue
     if (Get-Command Get-ScheduledTask -ErrorAction SilentlyContinue) {
         foreach ($name in $Script:LegacyTaskNames) {
             $task = Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
@@ -364,6 +370,76 @@ function Remove-LegacyRuntime {
                 Write-Info "Removed legacy automatic task: $name"
             }
         }
+    }
+}
+
+function Copy-RightlyRuntimeFile {
+    param([string] $Name)
+
+    $source = Join-Path $Script:ModuleRoot $Name
+    $destination = Join-Path $Script:RuntimeDir $Name
+    if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+        throw "Rightly runtime source file is missing: $source"
+    }
+    $sourceFull = [System.IO.Path]::GetFullPath($source)
+    $destinationFull = [System.IO.Path]::GetFullPath($destination)
+    if (-not $sourceFull.Equals($destinationFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+        Copy-Item -LiteralPath $sourceFull -Destination $destinationFull -Force
+    }
+}
+
+function New-RightlyRuntimeShortcut {
+    $official = Get-OfficialCodexPackage
+    $shortcutPath = Join-Path ([Environment]::GetFolderPath("Desktop")) "Rightly GPT.lnk"
+    $powershell = Join-Path $env:WINDIR "System32\WindowsPowerShell\v1.0\powershell.exe"
+    $shell = New-Object -ComObject WScript.Shell
+    $shortcut = $shell.CreateShortcut($shortcutPath)
+    $shortcut.TargetPath = $powershell
+    $shortcut.WorkingDirectory = $Script:RuntimeDir
+    $shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$Script:RuntimeLauncher`""
+    $shortcut.IconLocation = "$($official.Exe),0"
+    $shortcut.Description = "Rightly RTL for the official GPT Work / Codex app"
+    $shortcut.Save()
+    Write-Ok "Created launch-time RTL shortcut: $shortcutPath"
+}
+
+function Deploy-RightlyRuntimeFallback {
+    $official = Get-OfficialCodexPackage
+    New-Item -ItemType Directory -Path $Script:RuntimeDir -Force | Out-Null
+    foreach ($name in $Script:RuntimeFiles) { Copy-RightlyRuntimeFile $name }
+    [ordered]@{
+        architecture = "loopback-cdp-runtime"
+        officialPackageFullName = $official.PackageFullName
+        officialPackageVersion = $official.Version
+        payloadHash = (Get-FileHash -LiteralPath $Script:PayloadPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        installedAt = (Get-Date).ToString("o")
+        reason = "The installed MSIX package rejected verified in-place ASAR replacement."
+    } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $Script:RuntimeState -Encoding UTF8
+    New-RightlyRuntimeShortcut
+    Write-Warn "Windows protected this Codex package from in-place changes. Installed the launch-time RTL runtime instead."
+}
+
+function Start-RightlyRuntimeCodex {
+    if (-not (Test-Path -LiteralPath $Script:RuntimeLauncher -PathType Leaf)) {
+        throw "Rightly's GPT runtime launcher is missing: $($Script:RuntimeLauncher)"
+    }
+    $powershell = Join-Path $env:WINDIR "System32\WindowsPowerShell\v1.0\powershell.exe"
+    $process = Start-Process -FilePath $powershell -ArgumentList @(
+        "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
+        "-File", "`"$Script:RuntimeLauncher`""
+    ) -Wait -PassThru
+    if ($process.ExitCode -ne 0) {
+        $runtimeLog = Join-Path $Script:RuntimeDir "logs\gpt-runtime.log"
+        throw "GPT opened without a verified Rightly payload. See $runtimeLog"
+    }
+    Write-Ok "GPT Work / Codex RTL payload was injected and verified."
+}
+
+function Start-InstalledRightlyCodex {
+    if (Test-Path -LiteralPath $Script:RuntimeState -PathType Leaf) {
+        Start-RightlyRuntimeCodex
+    } else {
+        Start-OfficialCodex
     }
 }
 
@@ -429,6 +505,7 @@ function Grant-AsarWriteAccess {
     $attrib = Join-Path $env:WINDIR "System32\attrib.exe"
     $userSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 
+    Write-AsarAccessDiagnostics -Path $resourcesDir -Stage "resources folder before grant"
     Write-AsarAccessDiagnostics -Path $AsarPath -Stage "before grant"
 
     # Newer WindowsApps packages enforce the parent directory ACL in addition
@@ -453,8 +530,8 @@ function Grant-AsarWriteAccess {
         -Arguments @($AsarPath, "/grant", '*S-1-5-32-544:(F)', "*$userSid`:(F)", '*S-1-5-18:(F)', '*S-1-15-2-1:(RX)') `
         -FailureMessage "Could not grant write access to the official GPT ASAR")
 
-    # The parent directory must allow adding and deleting the entry so both the
-    # in-place overwrite and the rename fallback can replace app.asar.
+    # The parent directory is included because backup-mode replacement still
+    # needs to traverse the complete destination path.
     [void] (Invoke-NativeUtility -FilePath $icacls `
         -Arguments @($resourcesDir, "/grant", '*S-1-5-32-544:(F)', "*$userSid`:(F)") `
         -FailureMessage "Could not grant write access to the official GPT resources folder")
@@ -473,6 +550,7 @@ function Grant-AsarWriteAccess {
         Set-ItemProperty -LiteralPath $AsarPath -Name IsReadOnly -Value $false -ErrorAction Stop
     } catch { }
 
+    Write-AsarAccessDiagnostics -Path $resourcesDir -Stage "resources folder after grant"
     Write-AsarAccessDiagnostics -Path $AsarPath -Stage "after grant"
 }
 
@@ -492,15 +570,26 @@ function Test-IsAccessDeniedException {
     return $false
 }
 
+function Test-IsUnsupportedAsarReplacement {
+    param($Exception)
+
+    $probe = $Exception
+    while ($probe) {
+        if ($probe -is [System.NotSupportedException]) { return $true }
+        $probe = $probe.InnerException
+    }
+    return $false
+}
+
 function Assert-AsarCanBeReplaced {
     param([string] $AsarPath)
 
     # Returns "InPlace" when an exclusive read/write handle is available (the
-    # fast path that overwrites the file directly). Returns "Rename" when the
+    # fast path that overwrites the file directly). Returns "Backup" when the
     # only obstacle is an access-denied condition with no official process
-    # holding the file - a WindowsApps permission/attribute state that a
-    # same-directory rename still defeats. Throws only when a live GPT/Codex
-    # process keeps re-locking the ASAR past the deadline.
+    # holding the file. The caller then uses robocopy's backup mode rather than
+    # assuming a same-directory rename can bypass WindowsApps protection.
+    # Throws only when a live GPT/Codex process keeps re-locking the ASAR.
     $deadline = (Get-Date).AddSeconds(10)
     do {
         $stream = $null
@@ -531,10 +620,10 @@ function Assert-AsarCanBeReplaced {
         } catch { }
 
         # Access denied without any surviving official process is a permission
-        # or read-only-attribute state, not a live lock. The caller can still
-        # replace the ASAR by renaming the original aside, so stop waiting.
+        # or WindowsApps protection state, not a live lock. Stop polling and let
+        # the caller retry with SeBackupPrivilege/SeRestorePrivilege semantics.
         if (-not $officialBusy -and (Test-IsAccessDeniedException $lastException)) {
-            return "Rename"
+            return "Backup"
         }
         Start-Sleep -Milliseconds 350
     } while ((Get-Date) -lt $deadline)
@@ -552,37 +641,63 @@ function Assert-AsarCanBeReplaced {
     throw "Rightly force-closed GPT/Codex and prepared the WindowsApps permissions, but still could not obtain exclusive write access to GPT's app.asar.$processHint Original error: $lastError"
 }
 
-function Set-AsarByRename {
+function Copy-AsarWithBackupMode {
+    [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string] $Source,
         [Parameter(Mandatory)][string] $Destination
     )
 
-    # A same-directory rename needs delete access on the file and add access on
-    # the folder - both granted by Grant-AsarWriteAccess - and succeeds even when
-    # the original stays read-only, so it replaces the ASAR when an exclusive
-    # in-place open is refused. The original is only removed once the new copy is
-    # in place; any failure restores it.
-    $aside = "$Destination.rightly-previous"
-    if (Test-Path -LiteralPath $aside) {
-        Set-ItemProperty -LiteralPath $aside -Name IsReadOnly -Value $false -ErrorAction SilentlyContinue
-        Remove-Item -LiteralPath $aside -Force -ErrorAction SilentlyContinue
+    $robocopy = Join-Path $env:WINDIR "System32\robocopy.exe"
+    if (-not (Test-Path -LiteralPath $robocopy -PathType Leaf)) {
+        throw "robocopy.exe is unavailable."
     }
 
-    Write-AsarAccessDiagnostics -Path $Destination -Stage "before rename"
-    [System.IO.File]::Move($Destination, $aside)
+    $stageDir = Join-Path ([System.IO.Path]::GetTempPath()) `
+        ("rightly-robocopy-" + [guid]::NewGuid().ToString("N"))
+    $fileName = [System.IO.Path]::GetFileName($Destination)
+    $destinationDir = [System.IO.Path]::GetDirectoryName($Destination)
+    $stagedFile = Join-Path $stageDir $fileName
+
     try {
-        [System.IO.File]::Copy($Source, $Destination, $false)
-    } catch {
-        if (Test-Path -LiteralPath $Destination) {
-            Remove-Item -LiteralPath $Destination -Force -ErrorAction SilentlyContinue
-        }
-        [System.IO.File]::Move($aside, $Destination)
-        throw
-    }
+        New-Item -ItemType Directory -Path $stageDir -Force | Out-Null
+        [System.IO.File]::Copy($Source, $stagedFile, $true)
 
-    Set-ItemProperty -LiteralPath $aside -Name IsReadOnly -Value $false -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $aside -Force -ErrorAction SilentlyContinue
+        $output = @()
+        $exitCode = $null
+        $previousPreference = $ErrorActionPreference
+        try {
+            # Windows PowerShell 5.1 converts native stderr into error records.
+            # Robocopy exit codes 0-7 are success states; 8+ are real failures.
+            $ErrorActionPreference = "Continue"
+            $output = @(& $robocopy `
+                $stageDir `
+                $destinationDir `
+                $fileName `
+                "/B" `
+                "/COPY:DAT" `
+                "/R:1" `
+                "/W:1" `
+                "/IS" `
+                "/IT" `
+                "/NFL" `
+                "/NDL" `
+                "/NJH" `
+                "/NJS" `
+                "/NP" 2>&1)
+            $exitCode = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $previousPreference
+        }
+
+        if ($null -eq $exitCode -or $exitCode -ge 8) {
+            $details = (@($output | ForEach-Object { [string] $_ }) -join " ").Trim()
+            throw [System.NotSupportedException]::new(
+                "Backup-mode ASAR replacement failed with robocopy exit code $exitCode. $details")
+        }
+    } finally {
+        Remove-Item -LiteralPath $stageDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 
 function Copy-VerifiedAsar {
@@ -592,14 +707,29 @@ function Copy-VerifiedAsar {
         [Parameter(Mandatory)][string] $ExpectedHash
     )
 
+    $currentHash = (Get-FileHash -LiteralPath $Destination -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($currentHash -eq $ExpectedHash) { return $currentHash }
+
     Grant-AsarWriteAccess $Destination
-    if ((Assert-AsarCanBeReplaced $Destination) -eq "Rename") {
-        Set-AsarByRename -Source $Source -Destination $Destination
+    $replacementMode = Assert-AsarCanBeReplaced $Destination
+
+    if ($replacementMode -eq "InPlace") {
+        try {
+            [System.IO.File]::Copy($Source, $Destination, $true)
+        } catch {
+            if (-not (Test-IsAccessDeniedException $_.Exception)) { throw }
+            Write-Warn "Direct ASAR overwrite was denied; retrying in backup mode."
+            Copy-AsarWithBackupMode -Source $Source -Destination $Destination
+        }
     } else {
-        [System.IO.File]::Copy($Source, $Destination, $true)
+        Write-Info "Using backup-mode ASAR replacement."
+        Copy-AsarWithBackupMode -Source $Source -Destination $Destination
     }
     $installedHash = (Get-FileHash -LiteralPath $Destination -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ($installedHash -ne $ExpectedHash) { throw "The installed GPT ASAR failed SHA-256 verification." }
+    if ($installedHash -ne $ExpectedHash) {
+        throw [System.NotSupportedException]::new(
+            "Windows reported a successful ASAR copy, but the installed SHA-256 hash did not change.")
+    }
     return $installedHash
 }
 
@@ -648,6 +778,7 @@ function Install-PersistentCodexPatch {
     $originalHash = (Get-FileHash -LiteralPath $originalAsar -Algorithm SHA256).Hash.ToLowerInvariant()
     $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("rightly-gpt-asar-" + [guid]::NewGuid().ToString("N"))
     $patchedAsar = Join-Path $tempRoot "app.asar"
+    $runtimeFallback = $false
 
     try {
         New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
@@ -672,14 +803,31 @@ function Install-PersistentCodexPatch {
         })
         Write-Ok "GPT was patched in place. Normal future launches will keep Rightly active."
     } catch {
+        $installFailure = $_
         if (Test-Path -LiteralPath $Script:BackupPath) {
             try {
                 $backupHash = (Get-FileHash -LiteralPath $Script:BackupPath -Algorithm SHA256).Hash.ToLowerInvariant()
-                Copy-VerifiedAsar -Source $Script:BackupPath -Destination $official.Asar -ExpectedHash $backupHash | Out-Null
-                Write-Warn "The original GPT ASAR was restored after the failed patch."
+                $failedInstallHash = (Get-FileHash -LiteralPath $official.Asar -Algorithm SHA256).Hash.ToLowerInvariant()
+                if ($failedInstallHash -ne $backupHash) {
+                    Copy-VerifiedAsar -Source $Script:BackupPath -Destination $official.Asar -ExpectedHash $backupHash | Out-Null
+                    Write-Warn "The original GPT ASAR was restored after the failed patch."
+                } else {
+                    Write-Info "The official GPT ASAR remained original after the rejected replacement."
+                }
             } catch { }
         }
-        throw
+
+        if (-not (Test-IsUnsupportedAsarReplacement $installFailure.Exception)) {
+            throw $installFailure
+        }
+
+        $currentHash = (Get-FileHash -LiteralPath $official.Asar -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($currentHash -ne $originalHash) {
+            throw "The official GPT ASAR could not be restored after Windows rejected replacement."
+        }
+        Remove-ManagedDirectory $Script:StateRoot
+        Deploy-RightlyRuntimeFallback
+        $runtimeFallback = $true
     } finally {
         if (Test-Path -LiteralPath $tempRoot) {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -687,6 +835,7 @@ function Install-PersistentCodexPatch {
     }
 
     if ($NoLaunch) { Write-Info "Launch deferred to the unified installer." }
+    elseif ($runtimeFallback) { Start-RightlyRuntimeCodex }
     else { Start-OfficialCodex }
 }
 
@@ -722,7 +871,13 @@ function Show-PersistentCodexStatus {
     Write-Host ""
     Write-Host "Rightly for GPT Work / Codex - Status" -ForegroundColor Cyan
     Write-Info "Official package: $($official.PackageFullName)"
-    if (-not $state) { Write-Warn "No persistent Rightly patch state was found."; return }
+    if (-not $state -and (Test-Path -LiteralPath $Script:RuntimeState -PathType Leaf)) {
+        $runtime = Get-Content -LiteralPath $Script:RuntimeState -Raw | ConvertFrom-Json
+        Write-Ok "Launch-time RTL runtime is installed for GPT $($runtime.officialPackageVersion)."
+        Write-Info "Use the 'Rightly GPT' desktop shortcut so the payload can be injected and verified."
+        return
+    }
+    if (-not $state) { Write-Warn "No Rightly GPT installation state was found."; return }
     if ($state.packageFullName -ne $official.PackageFullName) {
         Write-Warn "GPT was updated after Rightly was installed. Run Repair RTL once."
         return
@@ -754,4 +909,4 @@ if ($selectedActions.Count -gt 1) { throw "Choose only one action: -Install, -Un
 if ($Install) { Install-PersistentCodexPatch }
 elseif ($Uninstall) { Uninstall-PersistentCodexPatch }
 elseif ($Status) { Show-PersistentCodexStatus }
-elseif ($Launch) { Start-OfficialCodex }
+elseif ($Launch) { Start-InstalledRightlyCodex }
