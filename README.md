@@ -41,6 +41,24 @@ If Windows protects GPT's Microsoft Store package from verified in-place modific
 
 Claude is patched directly and can be opened from its normal shortcut. GPT can also be opened normally when the installer reports that its persistent in-place patch succeeded. When **Rightly GPT** exists, use it for everyday GPT startup.
 
+## GPT and Claude: why they behave differently
+
+Rightly supports both applications, but their Windows packages impose different technical constraints. The difference is in how the correction is delivered, not in the RTL rules users receive.
+
+| Behavior | GPT Work / Codex | Claude Desktop / Code |
+| --- | --- | --- |
+| Official package | Microsoft Store package that may reject changes even for an administrator | Official package whose application files can currently be patched with backup and rollback support |
+| Preferred installation | Verified persistent in-place ASAR patch | Verified in-place patch of the official Claude installation |
+| Fallback when package files are protected | Launch-time injection through a private loopback DevTools endpoint | No separate launch-time fallback is currently required |
+| Normal way to open | Open normally after a persistent-patch success; otherwise use **Rightly GPT** | Always use the normal official Claude shortcut after installation |
+| Work performed at startup | Protected-package mode briefly injects and verifies each newly created renderer | No Rightly startup process is needed after the in-place patch is installed |
+| Closing the last window | GPT may remain in the notification area; **Rightly GPT** can create and verify a new window without restarting that process | Claude follows its normal official window and process behavior |
+| After an official update | Run **Repair RTL** and select GPT | Run **Repair RTL** and select Claude |
+| Copied application | No copied GPT application is created | No copied Claude application is created |
+| Permanent background repair service | None | None |
+
+In short, Claude receives the correction once in its installed files and then opens normally. GPT first attempts the same persistent approach, but when Windows protects the Store package, **Rightly GPT** becomes a verified startup bridge to the original application. Both integrations use the same direction principles and both remain user-triggered after official updates.
+
 ## Everyday behavior
 
 The **Rightly GPT** launcher is a small, windowless executable with a branded progress window. It reports the current phase: checking the existing process, opening GPT, applying the payload, and verifying the live renderer.
