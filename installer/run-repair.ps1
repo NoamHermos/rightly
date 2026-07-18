@@ -29,7 +29,7 @@ function Show-RightlySuccess {
     try {
         Add-Type -AssemblyName System.Windows.Forms
         [void][System.Windows.Forms.MessageBox]::Show(
-            "Every selected application completed successfully.`r`n`r`nWhen GPT was selected, Rightly verified either its persistent ASAR patch or its protected-package launch-time payload before this message was shown.",
+            "Every selected application completed successfully.`r`n`r`nWhen GPT was selected, Rightly installed and verified its dedicated launcher without modifying the Microsoft Store package.",
             "Rightly repair completed",
             [System.Windows.Forms.MessageBoxButtons]::OK,
             [System.Windows.Forms.MessageBoxIcon]::Information

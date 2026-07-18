@@ -21,6 +21,9 @@ try {
 
     . $modulePath
     Initialize-RightlyInstaller -Root $repoRoot
+    $obsoleteAsarHelper = Join-Path $sandbox "Programs\Rightly\Repair\src\gpt\lib\Rightly.GptAsar.ps1"
+    New-Item -ItemType Directory -Path (Split-Path -Parent $obsoleteAsarHelper) -Force | Out-Null
+    Set-Content -LiteralPath $obsoleteAsarHelper -Value "obsolete"
     Install-RightlyRepairBundle
 
     $repairRoot = Join-Path $sandbox "Programs\Rightly\Repair"
@@ -37,7 +40,6 @@ try {
         "src\gpt\gpt-rtl-cdp.js",
         "src\gpt\launch-gpt.ps1",
         "src\gpt\Rightly.Gpt.Launcher.cs",
-        "src\gpt\lib\Rightly.GptAsar.ps1",
         "src\gpt\lib\Rightly.GptLauncher.ps1",
         "src\claude\patch.ps1",
         "src\claude\claude-rtl-payload.js"
@@ -52,6 +54,8 @@ try {
     })
     Assert-True ($actual.Count -eq $expected.Count) `
         "Repair package contains unexpected files: $($actual | Where-Object { $_ -notin $expected })"
+    Assert-True (-not (Test-Path -LiteralPath $obsoleteAsarHelper)) `
+        "Repair package kept the obsolete GPT ASAR helper"
 
     $installOnline = Get-Content -LiteralPath $installOnlinePath -Raw
     $uninstallOnline = Get-Content -LiteralPath $uninstallOnlinePath -Raw

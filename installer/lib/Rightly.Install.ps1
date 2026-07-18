@@ -86,6 +86,10 @@ function Invoke-RightlyElevatedInstallerIfNeeded {
         [switch] $Elevated
     )
 
+    # The GPT integration lives entirely in the current user's profile and
+    # never writes to WindowsApps. Claude still patches its installed files and
+    # therefore keeps the existing administrator hand-off.
+    if ($Target -eq "GptWork") { return $false }
     if (Test-RightlyAdministrator) { return $false }
     if ($Elevated) { throw "Administrator rights were requested but were not granted." }
 
@@ -176,13 +180,16 @@ function Install-RightlyRepairBundle {
         "src\gpt\gpt-rtl-cdp.js",
         "src\gpt\launch-gpt.ps1",
         "src\gpt\Rightly.Gpt.Launcher.cs",
-        "src\gpt\lib\Rightly.GptAsar.ps1",
         "src\gpt\lib\Rightly.GptLauncher.ps1",
         "src\claude\patch.ps1",
         "src\claude\claude-rtl-payload.js"
     )) {
         Copy-RightlyRepairFile $relative
     }
+    # Remove files shipped by older repair bundles but no longer part of the
+    # supported launcher-only GPT architecture.
+    Remove-Item -LiteralPath (Join-Path $Script:RightlyRepairDir "src\gpt\lib\Rightly.GptAsar.ps1") `
+        -Force -ErrorAction SilentlyContinue
     Remove-RightlyLegacyRepairBundle
     Write-RightlyOk "Repair command installed at $($Script:RightlyRepairDir)"
 }
