@@ -14,7 +14,9 @@ payload = payload.replace(
     hookPoint,
     "    window.__RT_AI_TEST_DETECT_TEXT_DIR__ = detectTextDir;\n" +
     "    window.__RT_AI_TEST_APPLY_BLOCK_DIR__ = applyBlockDir;\n" +
-    "    window.__RT_AI_TEST_NORMALIZE_SIDEBAR_TITLE__ = normalizeSidebarTitleText;\n\n" + hookPoint
+    "    window.__RT_AI_TEST_CODE_LINE_DIRECTIONS__ = codeLineDirections;\n" +
+    "    window.__RT_AI_TEST_FIND_CODE_LINES__ = findExistingCodeLineElements;\n" +
+    "    window.__RT_AI_TEST_PROCESS_SIDEBAR_TITLE__ = processSidebarTitleElement;\n\n" + hookPoint
 );
 
 const context = {
@@ -28,7 +30,9 @@ const context = {
 vm.runInNewContext(payload, context, { filename: payloadPath });
 const detectTextDir = context.window.__RT_AI_TEST_DETECT_TEXT_DIR__;
 const applyBlockDir = context.window.__RT_AI_TEST_APPLY_BLOCK_DIR__;
-const normalizeSidebarTitle = context.window.__RT_AI_TEST_NORMALIZE_SIDEBAR_TITLE__;
+const codeLineDirections = context.window.__RT_AI_TEST_CODE_LINE_DIRECTIONS__;
+const findCodeLines = context.window.__RT_AI_TEST_FIND_CODE_LINES__;
+const processSidebarTitle = context.window.__RT_AI_TEST_PROCESS_SIDEBAR_TITLE__;
 
 assert.equal(detectTextDir("Hello שלום"), "rtl");
 assert.equal(detectTextDir("translate שלום please"), "rtl");
@@ -37,9 +41,47 @@ assert.equal(detectTextDir("Hello world"), "ltr");
 assert.equal(detectTextDir("123 https://example.com"), "ltr");
 assert.equal(detectTextDir("مرحبا بالعالم"), "rtl");
 assert.equal(detectTextDir(""), null);
-assert.equal(normalizeSidebarTitle("Hello שלום"), "\u200fHello שלום");
-assert.equal(normalizeSidebarTitle("\u200fHello שלום"), "\u200fHello שלום");
-assert.equal(normalizeSidebarTitle("Hello world"), "Hello world");
+assert.deepEqual(
+    Array.from(codeLineDirections("English only\nPowerShell פקודה\nssh nas-home\nWindows ועברית")),
+    ["ltr", "rtl", "ltr", "rtl"]
+);
+assert.deepEqual(Array.from(codeLineDirections("مرحبا\n")), ["ltr", "ltr"]);
+
+function makeDomElement(tagName, textContent, childNodes) {
+    const element = {
+        nodeType: 1,
+        tagName,
+        textContent,
+        childNodes: childNodes || [],
+        matches: function (selector) { return selector === "span" && tagName === "SPAN"; }
+    };
+    element.querySelectorAll = function (selector) {
+        const matches = [];
+        function visit(node) {
+            if (!node || node.nodeType !== 1) return;
+            if (node !== element && node.matches(selector)) matches.push(node);
+            (node.childNodes || []).forEach(visit);
+        }
+        element.childNodes.forEach(visit);
+        return matches;
+    };
+    return element;
+}
+
+const codeLineOne = makeDomElement("SPAN", "English only");
+const codeLineTwo = makeDomElement("SPAN", "PowerShell פקודה");
+const codeLineThree = makeDomElement("SPAN", "ssh nas-home");
+const codeLineContainer = makeDomElement("SPAN", "", [
+    codeLineOne,
+    { nodeType: 3, nodeValue: "\n" },
+    codeLineTwo,
+    { nodeType: 3, nodeValue: "\n" },
+    codeLineThree
+]);
+const codeRoot = makeDomElement("CODE", "", [codeLineContainer]);
+const matchedCodeLines = findCodeLines(codeRoot, "English only\nPowerShell פקודה\nssh nas-home");
+assert.equal(matchedCodeLines.container, codeLineContainer);
+assert.deepEqual(Array.from(matchedCodeLines.lines), [codeLineOne, codeLineTwo, codeLineThree]);
 
 function makeElement(tagName, initialAttributes) {
     const attributes = new Map(Object.entries(initialAttributes || {}));
@@ -52,6 +94,23 @@ function makeElement(tagName, initialAttributes) {
         removeAttribute: function (name) { attributes.delete(name); }
     };
 }
+
+const sidebarChild = { id: "react-owned-marquee" };
+const sidebarTitle = makeElement("SPAN");
+sidebarTitle.textContent = "YouTube תקיעות";
+sidebarTitle.childNodes = [sidebarChild];
+sidebarTitle.querySelector = function () {
+    return { textContent: "YouTube תקיעות" };
+};
+processSidebarTitle(sidebarTitle);
+assert.equal(sidebarTitle.textContent, "YouTube תקיעות");
+assert.equal(sidebarTitle.childNodes[0], sidebarChild);
+assert.equal(sidebarTitle.getAttribute("data-rt-ai-sidebar-rtl"), "true");
+
+sidebarTitle.textContent = "English title";
+sidebarTitle.querySelector = function () { return { textContent: "English title" }; };
+processSidebarTitle(sidebarTitle);
+assert.equal(sidebarTitle.hasAttribute("data-rt-ai-sidebar-rtl"), false);
 
 const block = makeElement("P");
 applyBlockDir(block, detectTextDir("Hello שלום"));

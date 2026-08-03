@@ -127,7 +127,10 @@ Assert-True ($payload.Contains('processTables')) "RTL table processing is missin
 Assert-True ($payload.Contains('list-style-position:outside!important')) "RTL list styling is missing"
 Assert-True ($payload.Contains('requestIdleCallback')) "Long-chat work is not idle-scheduled"
 Assert-True ($payload.Contains('PROCESS_BATCH_SIZE = 3')) "Long-chat processing is not bounded"
-Assert-True ($payload.Contains('normalizeSidebarTitleText')) "Mixed Hebrew sidebar titles are not normalized"
+Assert-True ($payload.Contains('processCodeBlocks')) "Per-line code-block processing is missing"
+Assert-True ($payload.Contains('data-rt-ai-code-line')) "Per-line code direction styling is missing"
+Assert-True ($payload.Contains('readSidebarTitleText')) "Mixed Hebrew sidebar title handling is missing"
+Assert-True (-not $payload.Contains('el.textContent = next')) "Sidebar title handling must not replace React-owned text"
 
 # Shared installer and repair command stay current and user-triggered.
 Assert-True ($installer.Contains('lib\Rightly.Install.ps1')) "Installer does not load the shared module"

@@ -3,7 +3,7 @@
 //
 // Adds automatic right-to-left support to OpenAI Codex Desktop on Windows.
 // Detects Hebrew and Arabic text in the composer and streamed responses,
-// aligns RTL content naturally, and keeps code blocks left-to-right.
+// aligns RTL content naturally, and aligns Hebrew code-block lines per line.
 //
 // Part of the RT-AI tooling suite (https://rt-ai.co.il).
 // ===========================================================================
@@ -18,20 +18,24 @@
 
     var INPUT_SEL = ".ProseMirror, [contenteditable=\"true\"], textarea, input[type=\"text\"], input:not([type])";
     var CODE_SEL = "pre, code, .cm-editor, .monaco-editor, .shiki, .hljs, [data-language]";
+    var CODE_BLOCK_SEL = "pre, code[class*=\"whitespace-pre\"]";
     var TEXT_SEL = "p, li, h1, h2, h3, h4, h5, h6, blockquote, td, th";
     var TABLE_SEL = "table";
     var APP_CHROME_SEL = "nav, aside, [role=\"navigation\"], [role=\"menu\"], [role=\"menubar\"], [role=\"toolbar\"]";
     var SIDEBAR_TITLE_SEL = "aside [data-thread-title=\"true\"]";
-    var SIDEBAR_RTL_MARK = "\u200f";
     var SIDEBAR_MARK_ATTR = "data-rt-ai-sidebar-rtl";
     var MANAGED_DIR_ATTR = "data-rt-ai-dir";
     var TABLE_WRAPPER_ATTR = "data-rt-ai-table-wrapper";
-    var BLOCK_SEL = "table, ul, ol, " + TEXT_SEL + ", " + INPUT_SEL;
+    var CODE_LINES_ATTR = "data-rt-ai-code-lines";
+    var CODE_LINE_ATTR = "data-rt-ai-code-line";
+    var CODE_LINE_CONTAINER_ATTR = "data-rt-ai-code-line-container";
+    var CODE_NEWLINE_ATTR = "data-rt-ai-code-newline";
+    var BLOCK_SEL = "table, ul, ol, " + TEXT_SEL + ", " + INPUT_SEL + ", " + CODE_BLOCK_SEL;
     var MAX_MUTATION_NODES = 200;
     var PROCESS_BATCH_SIZE = 3;
     var originalDirectionStates = new WeakMap();
-    var sidebarTitleStates = new WeakMap();
     var tableAlignmentTargets = new WeakMap();
+    var codeBlockSources = new WeakMap();
     var pendingRoots = [];
     var pendingRootSet = new WeakSet();
 
@@ -112,52 +116,19 @@
     }
 
     // Left sidebar -----------------------------------------------------------
-    // Keep its layout LTR, but prefix mixed Hebrew titles with an invisible
-    // RLM so the Unicode bidi algorithm orders the words correctly.
-    function normalizeSidebarTitleText(text) {
-        var clean = String(text || "").replace(/^\u200f+/, "");
-        return hasHebrew(clean) ? SIDEBAR_RTL_MARK + clean : clean;
+    // Mark titles for CSS-only bidi styling. Never rewrite their textContent:
+    // it belongs to React's marquee component and contains duplicated tracks
+    // while scrolling, so replacing it can freeze a stale preview as the title.
+    function readSidebarTitleText(el) {
+        var content = el.querySelector && el.querySelector("[data-marquee-content=\"true\"]");
+        return (content || el).textContent || "";
     }
 
     function processSidebarTitleElement(el) {
-        var current = el.textContent || "";
-        var next = normalizeSidebarTitleText(current);
-        var isHebrew = hasHebrew(next);
-
-        if (isHebrew && !sidebarTitleStates.has(el)) {
-            sidebarTitleStates.set(el, {
-                hadDir: el.hasAttribute("dir"),
-                dir: el.getAttribute("dir"),
-                textAlign: el.style.textAlign
-            });
-        }
-
-        if (current !== next) {
-            if (el.childNodes.length === 1 && el.firstChild && el.firstChild.nodeType === 3) {
-                el.firstChild.nodeValue = next;
-            } else {
-                el.textContent = next;
-            }
-        }
-
-        if (isHebrew) {
+        if (hasHebrew(readSidebarTitleText(el))) {
             el.setAttribute(SIDEBAR_MARK_ATTR, "true");
-            el.setAttribute("dir", "auto");
-            el.style.textAlign = "left";
-            return;
-        }
-
-        if (!el.hasAttribute(SIDEBAR_MARK_ATTR)) return;
-        el.removeAttribute(SIDEBAR_MARK_ATTR);
-        var state = sidebarTitleStates.get(el);
-        if (state) {
-            if (state.hadDir) el.setAttribute("dir", state.dir);
-            else el.removeAttribute("dir");
-            el.style.textAlign = state.textAlign;
-            sidebarTitleStates.delete(el);
         } else {
-            el.removeAttribute("dir");
-            el.style.textAlign = "";
+            el.removeAttribute(SIDEBAR_MARK_ATTR);
         }
     }
 
@@ -247,13 +218,195 @@
         originalDirectionStates.delete(el);
     }
 
-    function forceCodeLTR(root) {
-        qsa(root, CODE_SEL).forEach(function (el) {
-            el.dir = "ltr";
-            el.style.direction = "ltr";
-            el.style.textAlign = "left";
-            el.style.unicodeBidi = el.tagName === "CODE" ? "isolate" : "embed";
+    // Code blocks ------------------------------------------------------------
+    function codeLineDirections(text) {
+        return String(text || "").replace(/\r\n?/g, "\n").split("\n").map(function (line) {
+            return hasHebrew(line) ? "rtl" : "ltr";
         });
+    }
+
+    function cloneNodeWithoutManagedCodeAttrs(node) {
+        var clone = node.cloneNode(false);
+        if (clone.removeAttribute) {
+            clone.removeAttribute(CODE_LINES_ATTR);
+            clone.removeAttribute(CODE_LINE_ATTR);
+            clone.removeAttribute(CODE_LINE_CONTAINER_ATTR);
+            clone.removeAttribute(CODE_NEWLINE_ATTR);
+            clone.removeAttribute("dir");
+        }
+        return clone;
+    }
+
+    // Split highlighted markup at logical newlines while cloning its nested
+    // token spans. This retains syntax colours instead of flattening to text.
+    function splitNodeIntoCodeLines(node) {
+        if (node.nodeType === 3) {
+            return String(node.nodeValue || "").replace(/\r\n?/g, "\n").split("\n").map(function (part) {
+                return document.createTextNode(part);
+            });
+        }
+        if (node.nodeType === 1 && node.tagName === "BR") return [null, null];
+        if (node.nodeType !== 1) return [node.cloneNode(true)];
+
+        var lineFragments = splitChildNodesIntoCodeLines(node);
+        return lineFragments.map(function (fragment) {
+            var clone = cloneNodeWithoutManagedCodeAttrs(node);
+            clone.appendChild(fragment);
+            return clone;
+        });
+    }
+
+    function splitChildNodesIntoCodeLines(parent) {
+        var lines = [document.createDocumentFragment()];
+        Array.prototype.slice.call(parent.childNodes || []).forEach(function (child) {
+            var pieces = splitNodeIntoCodeLines(child);
+            if (pieces[0]) lines[lines.length - 1].appendChild(pieces[0]);
+            for (var i = 1; i < pieces.length; i++) {
+                var nextLine = document.createDocumentFragment();
+                if (pieces[i]) nextLine.appendChild(pieces[i]);
+                lines.push(nextLine);
+            }
+        });
+        return lines;
+    }
+
+    function findCodeContentRoot(pre) {
+        if (pre.tagName !== "PRE") return pre;
+        var children = pre.children || [];
+        for (var i = 0; i < children.length; i++) {
+            if (children[i].tagName === "CODE") return children[i];
+        }
+        return pre;
+    }
+
+    function readCodeBlockText(pre) {
+        return pre.textContent || "";
+    }
+
+    function findExistingCodeLineElements(contentRoot, source) {
+        var expectedLines = source.split("\n");
+        var containers = [contentRoot].concat(qsa(contentRoot, "span"));
+
+        for (var containerIndex = 0; containerIndex < containers.length; containerIndex++) {
+            var container = containers[containerIndex];
+            var groups = [[]];
+            var nodes = Array.prototype.slice.call(container.childNodes || []);
+            for (var nodeIndex = 0; nodeIndex < nodes.length; nodeIndex++) {
+                var node = nodes[nodeIndex];
+                if (node.nodeType !== 3) {
+                    groups[groups.length - 1].push(node);
+                    continue;
+                }
+
+                var parts = String(node.nodeValue || "").replace(/\r\n?/g, "\n").split("\n");
+                if (parts[0]) groups[groups.length - 1].push(node);
+                for (var partIndex = 1; partIndex < parts.length; partIndex++) {
+                    groups.push([]);
+                    if (parts[partIndex]) groups[groups.length - 1].push(node);
+                }
+            }
+
+            if (groups.length !== expectedLines.length) continue;
+            var lineElements = [];
+            var matches = groups.every(function (group, lineIndex) {
+                if (group.length !== 1 || group[0].nodeType !== 1) return false;
+                if ((group[0].textContent || "") !== expectedLines[lineIndex]) return false;
+                lineElements.push(group[0]);
+                return true;
+            });
+            if (matches) return { container: container, lines: lineElements };
+        }
+        return null;
+    }
+
+    function markExistingCodeLines(pre, match, directions, source) {
+        qsa(pre, "[" + CODE_LINE_ATTR + "]").forEach(function (line) {
+            if (match.lines.indexOf(line) === -1) {
+                line.removeAttribute(CODE_LINE_ATTR);
+                line.removeAttribute("dir");
+            }
+        });
+        qsa(pre, "[" + CODE_LINE_CONTAINER_ATTR + "]").forEach(function (container) {
+            if (container !== match.container) container.removeAttribute(CODE_LINE_CONTAINER_ATTR);
+        });
+
+        match.container.setAttribute(CODE_LINE_CONTAINER_ATTR, "true");
+        match.lines.forEach(function (line, index) {
+            var dir = directions[index] || "ltr";
+            line.setAttribute(CODE_LINE_ATTR, dir);
+            line.setAttribute("dir", dir);
+        });
+        pre.setAttribute(CODE_LINES_ATTR, "true");
+        pre.setAttribute("dir", "ltr");
+        codeBlockSources.set(pre, source);
+    }
+
+    function replaceChildren(el, fragment) {
+        while (el.firstChild) el.removeChild(el.firstChild);
+        el.appendChild(fragment);
+    }
+
+    function processCodeBlock(pre) {
+        if (isInsideInput(pre) || isInsideAppChrome(pre)) return;
+
+        var source = readCodeBlockText(pre).replace(/\r\n?/g, "\n");
+        if (pre.hasAttribute(CODE_LINES_ATTR) && codeBlockSources.get(pre) === source) return;
+
+        var contentRoot = findCodeContentRoot(pre);
+        var directions = codeLineDirections(source);
+        var existingLines = findExistingCodeLineElements(contentRoot, source);
+        if (existingLines) {
+            markExistingCodeLines(pre, existingLines, directions, source);
+            return;
+        }
+
+        var lineFragments;
+        if (pre.hasAttribute(CODE_LINES_ATTR)) {
+            lineFragments = source.split("\n").map(function (line) {
+                var fragment = document.createDocumentFragment();
+                fragment.appendChild(document.createTextNode(line));
+                return fragment;
+            });
+        } else {
+            lineFragments = splitChildNodesIntoCodeLines(contentRoot);
+        }
+
+        var replacement = document.createDocumentFragment();
+        for (var i = 0; i < lineFragments.length; i++) {
+            var line = document.createElement("span");
+            var dir = directions[i] || "ltr";
+            line.setAttribute(CODE_LINE_ATTR, dir);
+            line.setAttribute("dir", dir);
+            line.appendChild(lineFragments[i]);
+            replacement.appendChild(line);
+
+            if (i < lineFragments.length - 1) {
+                var newline = document.createElement("span");
+                newline.setAttribute(CODE_NEWLINE_ATTR, "true");
+                newline.setAttribute("aria-hidden", "true");
+                newline.appendChild(document.createTextNode("\n"));
+                replacement.appendChild(newline);
+            }
+        }
+
+        replaceChildren(contentRoot, replacement);
+        pre.setAttribute(CODE_LINES_ATTR, "true");
+        pre.setAttribute("dir", "ltr");
+        codeBlockSources.set(pre, source);
+    }
+
+    function processCodeBlocks(root) {
+        var blocks = [];
+        qsaWithClosest(root, CODE_BLOCK_SEL).forEach(function (block) {
+            var outer = block;
+            var ancestor = outer.parentElement && outer.parentElement.closest(CODE_BLOCK_SEL);
+            while (ancestor) {
+                outer = ancestor;
+                ancestor = outer.parentElement && outer.parentElement.closest(CODE_BLOCK_SEL);
+            }
+            if (blocks.indexOf(outer) === -1) blocks.push(outer);
+        });
+        blocks.forEach(processCodeBlock);
     }
 
     function applyBlockDir(el, dir) {
@@ -362,7 +515,7 @@
         processTables(base);
         processText(base);
         processInputs(base);
-        forceCodeLTR(base);
+        processCodeBlocks(base);
     }
 
     function injectStyles() {
@@ -378,8 +531,14 @@
             "[data-rt-ai-table-wrapper=\"rtl\"]{direction:rtl!important;text-align:right!important;width:fit-content!important;max-width:100%!important;margin-left:auto!important;margin-right:auto!important;align-self:center!important;justify-self:center!important}",
             "table[data-rt-ai-dir=\"rtl\"] th,table[data-rt-ai-dir=\"rtl\"] td{text-align:right!important;unicode-bidi:isolate!important}",
             "[data-thread-title=\"true\"][data-rt-ai-sidebar-rtl=\"true\"]{text-align:left!important}",
+            "[data-thread-title=\"true\"][data-rt-ai-sidebar-rtl=\"true\"] [data-marquee-content=\"true\"],[data-thread-title=\"true\"][data-rt-ai-sidebar-rtl=\"true\"]:not(:has([data-marquee-content=\"true\"])){direction:rtl!important;text-align:left!important;unicode-bidi:isolate!important}",
             "pre,.cm-editor,.monaco-editor,.shiki,.hljs,[data-language]{direction:ltr!important;text-align:left!important;unicode-bidi:embed!important}",
-            "code{direction:ltr!important;unicode-bidi:isolate!important}"
+            "code{direction:ltr!important;unicode-bidi:isolate!important}",
+            "[data-rt-ai-code-lines],[data-rt-ai-code-line-container]{display:block!important;min-width:100%!important}",
+            "[data-rt-ai-code-line]{display:block!important;width:100%!important;unicode-bidi:isolate!important}",
+            "[data-rt-ai-code-line=\"rtl\"]{direction:rtl!important;text-align:right!important}",
+            "[data-rt-ai-code-line=\"ltr\"]{direction:ltr!important;text-align:left!important}",
+            "[data-rt-ai-code-newline]{display:none!important}"
         ].join("\n");
         document.head.appendChild(style);
     }
@@ -438,7 +597,14 @@
 
     function enqueueWorkInSubtree(node) {
         var el = node && node.nodeType === 1 ? node : node && node.parentElement;
-        if (!el || isInsideAppChrome(el) || isInsideCode(el)) return;
+        if (!el || isInsideAppChrome(el)) return;
+
+        var codeBlock = el.closest && el.closest(CODE_BLOCK_SEL);
+        if (codeBlock) {
+            enqueueRoot(codeBlock);
+            return;
+        }
+        if (isInsideCode(el)) return;
 
         var closest = el.closest && el.closest(BLOCK_SEL);
         if (closest && !isInsideAppChrome(closest) && !isInsideCode(closest)) {
@@ -449,7 +615,12 @@
         // Queue individual semantic blocks. This spreads a large conversation
         // across idle frames instead of blocking the renderer with one full scan.
         qsa(el, BLOCK_SEL).forEach(function (candidate) {
-            if (!isInsideAppChrome(candidate) && !isInsideCode(candidate)) enqueueRoot(candidate);
+            if (isInsideAppChrome(candidate)) return;
+            if (candidate.matches && candidate.matches(CODE_BLOCK_SEL)) {
+                enqueueRoot(candidate);
+            } else if (!isInsideCode(candidate)) {
+                enqueueRoot(candidate);
+            }
         });
     }
 
@@ -462,8 +633,11 @@
 
     function nearestWorkRoot(node) {
         var el = node && node.nodeType === 1 ? node : node && node.parentElement;
-        if (!el || isInsideAppChrome(el) || isInsideCode(el)) return null;
+        if (!el || isInsideAppChrome(el)) return null;
         if (el.closest) {
+            var codeBlock = el.closest(CODE_BLOCK_SEL);
+            if (codeBlock) return codeBlock;
+            if (isInsideCode(el)) return null;
             var table = el.closest("table");
             if (table) return table;
             var block = el.closest(BLOCK_SEL);

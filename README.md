@@ -2,7 +2,7 @@
 
 Rightly adds intelligent Hebrew and Arabic right-to-left rendering to the official GPT Work / Codex and Claude Desktop applications on Windows.
 
-It detects RTL letters anywhere in a line, including lines that begin with an English word. Mixed-language messages, lists, tables, task titles, and interactive question panels are displayed in the correct reading direction, while code and English-only interface elements remain left-to-right.
+It detects RTL letters anywhere in a line, including lines that begin with an English word. Mixed-language messages, lists, tables, task titles, and interactive question panels are displayed in the correct reading direction, while inline code and English-only interface elements remain left-to-right. In GPT/Codex code blocks, each line containing a Hebrew letter is aligned right-to-left independently.
 
 ## Requirements
 
@@ -84,10 +84,11 @@ Rightly installs a renderer payload tailored to each application. The payload fo
 
 - A text line containing a Hebrew or Arabic letter is rendered RTL, regardless of its first word.
 - A line without RTL letters remains LTR.
-- Inline code, code blocks, and technical controls remain LTR.
+- Inline code and technical controls remain LTR.
+- In GPT/Codex code blocks, each line containing at least one Hebrew letter is aligned RTL and to the right; all other lines remain LTR and aligned left.
 - Bullets and numbered-list markers stay on the correct side.
 - Tables containing RTL text are centered within the message width, use the correct column direction, and align RTL cells correctly.
-- Mixed Hebrew-English task titles remain left-aligned in the sidebar while receiving an invisible `U+200F` mark that preserves their reading order.
+- Mixed Hebrew-English task titles remain left-aligned in the sidebar. Their bidi styling is applied through CSS without rewriting React-owned title or marquee content.
 - Claude interactive question and answer panels receive the same direction rules as normal messages.
 - Long conversations are processed in small idle-time batches instead of synchronous full-page scans.
 

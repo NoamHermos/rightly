@@ -90,7 +90,11 @@ Assert-True ($payload.Contains('processTables')) "RTL table processing is missin
 Assert-True ($payload.Contains('list-style-position:outside!important')) "RTL list styling is missing"
 Assert-True ($payload.Contains('requestIdleCallback')) "Long-chat work is not idle-scheduled"
 Assert-True ($payload.Contains('PROCESS_BATCH_SIZE = 3')) "Long-chat processing is not bounded"
-Assert-True ($payload.Contains('normalizeSidebarTitleText')) "Mixed Hebrew sidebar title handling is missing"
+Assert-True ($payload.Contains('aside [data-thread-title=\"true\"]')) "Sidebar task title targeting is missing"
+Assert-True ($payload.Contains('processCodeBlocks')) "Per-line code-block handling is missing"
+Assert-True ($payload.Contains('data-rt-ai-code-line')) "Per-line code direction markers are missing"
+Assert-True ($payload.Contains('readSidebarTitleText')) "Non-destructive sidebar title detection is missing"
+Assert-True (-not $payload.Contains('el.textContent = next')) "Sidebar titles must not replace React-owned text"
 
 & node.exe --check $paths.Injector
 Assert-True ($LASTEXITCODE -eq 0) "GPT injector has JavaScript syntax errors"
