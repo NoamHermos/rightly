@@ -22,6 +22,7 @@
     var TEXT_SEL = "p, li, h1, h2, h3, h4, h5, h6, blockquote, td, th";
     var TABLE_SEL = "table";
     var APP_CHROME_SEL = "nav, aside, [role=\"navigation\"], [role=\"menu\"], [role=\"menubar\"], [role=\"toolbar\"]";
+    var APP_SHELL_LTR_ATTR = "data-rt-ai-app-shell-ltr";
     var SIDEBAR_TITLE_SEL = "aside [data-thread-title=\"true\"]";
     var SIDEBAR_MARK_ATTR = "data-rt-ai-sidebar-rtl";
     var MANAGED_DIR_ATTR = "data-rt-ai-dir";
@@ -113,6 +114,17 @@
         if (!hasRTL(text)) return "ltr";
         dir = firstStrong(stripLeadingLTR(text));
         return dir === "rtl" ? "rtl" : "ltr";
+    }
+
+    // Application shell ------------------------------------------------------
+    // Newer Codex builds mirror the complete Electron layout when the Windows
+    // locale is Hebrew by setting <html dir="rtl">. Keep application chrome
+    // and flex layout LTR; individual Hebrew content is managed below.
+    function enforceAppShellLtr() {
+        var root = document.documentElement;
+        if (!root) return;
+        root.setAttribute(APP_SHELL_LTR_ATTR, "true");
+        root.setAttribute("dir", "ltr");
     }
 
     // Left sidebar -----------------------------------------------------------
@@ -523,6 +535,7 @@
         var style = document.createElement("style");
         style.id = "rt-ai-codex-rtl-styles";
         style.textContent = [
+            "html[data-rt-ai-app-shell-ltr=\"true\"],html[data-rt-ai-app-shell-ltr=\"true\"]>body{direction:ltr!important}",
             "[data-rt-ai-dir=\"rtl\"]{direction:rtl!important;text-align:right!important;unicode-bidi:isolate!important}",
             "[data-rt-ai-dir=\"ltr\"]{direction:ltr!important;text-align:left!important;unicode-bidi:isolate!important}",
             "ul[data-rt-ai-dir=\"rtl\"],ol[data-rt-ai-dir=\"rtl\"]{list-style-position:outside!important;padding-left:0!important;padding-right:1.5em!important}",
@@ -648,6 +661,7 @@
 
     // Lifecycle --------------------------------------------------------------
     function init() {
+        enforceAppShellLtr();
         injectStyles();
         enqueueExistingContent();
 

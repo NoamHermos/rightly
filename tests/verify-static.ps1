@@ -123,6 +123,8 @@ Assert-True ($runtimeInjector.Contains('hasRightlyMarker')) "GPT injector does n
 # Direction rules remain application-specific and performance-bounded.
 Assert-True ($payload.Contains('hasHebrew')) "Hebrew-anywhere detection is missing"
 Assert-True ($payload.Contains('APP_CHROME_SEL')) "Application chrome exclusion is missing"
+Assert-True ($payload.Contains('enforceAppShellLtr')) "Application shell LTR protection is missing"
+Assert-True ($payload.Contains('html[data-rt-ai-app-shell-ltr=\"true\"]')) "Application shell LTR styling is missing"
 Assert-True ($payload.Contains('processTables')) "RTL table processing is missing"
 Assert-True ($payload.Contains('list-style-position:outside!important')) "RTL list styling is missing"
 Assert-True ($payload.Contains('requestIdleCallback')) "Long-chat work is not idle-scheduled"

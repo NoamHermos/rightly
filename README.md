@@ -85,6 +85,7 @@ Rightly installs a renderer payload tailored to each application. The payload fo
 - A text line containing a Hebrew or Arabic letter is rendered RTL, regardless of its first word.
 - A line without RTL letters remains LTR.
 - Inline code and technical controls remain LTR.
+- The GPT/Codex application shell remains LTR even when a Hebrew Windows locale makes Codex set `<html dir="rtl">`; only detected content is switched to RTL.
 - In GPT/Codex code blocks, each line containing at least one Hebrew letter is aligned RTL and to the right; all other lines remain LTR and aligned left.
 - Bullets and numbered-list markers stay on the correct side.
 - Tables containing RTL text are centered within the message width, use the correct column direction, and align RTL cells correctly.
