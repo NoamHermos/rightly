@@ -161,6 +161,15 @@ Choose GPT, Claude, or both.
 
 Rightly does not send conversation content to a Rightly server. The GPT debugging endpoint accepts loopback connections only, and the injector disconnects after live verification.
 
+## Code signing policy
+
+The Rightly GPT launcher's signing scope, privacy statement, team roles, and
+reproducible GitHub build process are documented in the
+[code signing policy](CODE_SIGNING_POLICY.md). Rightly is preparing the launcher
+for free open-source signing through SignPath.io, with the certificate provided
+by SignPath Foundation. Until the public signing setup is approved and active,
+release artifacts must be treated as unsigned.
+
 Rightly is an independent, unofficial project and is not affiliated with OpenAI or Anthropic. Application updates can affect compatibility, and the project is used at your own risk.
 
 The project is distributed under the [MIT License](LICENSE). Third-party licenses and attribution are listed in [THIRD_PARTY_NOTICES.md](docs/THIRD_PARTY_NOTICES.md), and security information is available in the [security policy](.github/SECURITY.md).

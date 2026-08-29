@@ -21,10 +21,10 @@ removed.
 Rightly performs privileged and application-integrity-sensitive operations, so
 users should review the installer before running it.
 
-- **GPT Work / Codex:** Rightly modifies the official package's external
-  `app.asar` in place. Before doing so, it creates a package-version-specific
-  backup and records SHA-256 hashes for the original and patched files. Restore
-  operations refuse backups from another version or unexpected file contents.
+- **GPT Work / Codex:** Rightly does not modify the Microsoft Store package.
+  Its dedicated launcher starts the official package with a loopback-only
+  debugging endpoint, injects the RTL payload into the live renderer, verifies
+  the payload marker, and disconnects the short-lived injector.
 - **Claude:** Rightly downloads one pinned upstream patch script, verifies its
   exact SHA-256 digest, replaces only its renderer payload and non-interactive
   entry point, then relies on that engine's backup and rollback flow. That

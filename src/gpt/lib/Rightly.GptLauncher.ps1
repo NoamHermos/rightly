@@ -24,9 +24,11 @@ function New-RightlyGptLauncher {
 
     $destinationDirectory = Split-Path -Parent $DestinationPath
     New-Item -ItemType Directory -Path $destinationDirectory -Force | Out-Null
-    $temporaryExe = Join-Path $destinationDirectory ("Rightly.Gpt.Launcher.{0}.tmp.exe" -f [guid]::NewGuid().ToString("N"))
+    $temporaryDirectory = Join-Path $destinationDirectory ("Rightly.Gpt.Launcher.Build.{0}" -f [guid]::NewGuid().ToString("N"))
+    $temporaryExe = Join-Path $temporaryDirectory "Rightly GPT.exe"
 
     try {
+        New-Item -ItemType Directory -Path $temporaryDirectory -Force | Out-Null
         $compiler = @(
             (Join-Path $env:WINDIR "Microsoft.NET\Framework64\v4.0.30319\csc.exe"),
             (Join-Path $env:WINDIR "Microsoft.NET\Framework\v4.0.30319\csc.exe")
@@ -68,7 +70,7 @@ function New-RightlyGptLauncher {
         Move-Item -LiteralPath $temporaryExe -Destination $DestinationPath -Force
         return [System.IO.Path]::GetFullPath($DestinationPath)
     } finally {
-        Remove-Item -LiteralPath $temporaryExe -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $temporaryDirectory -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
 
