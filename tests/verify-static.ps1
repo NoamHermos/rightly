@@ -115,7 +115,8 @@ Assert-True ($patcher.Contains('rollback backup failed SHA-256 verification')) "
 Assert-True ($patcher.Contains('Nothing was changed')) "Unsafe legacy state is not preserved"
 
 # Native launcher and runtime verification behavior.
-Assert-True ($launcherModule.Contains('$shortcut.TargetPath = $LauncherPath')) "GPT shortcut does not target the EXE"
+Assert-True ($launcherModule.Contains('$shortcut.TargetPath = $powerShellPath')) "GPT shortcut does not target signed Windows PowerShell"
+Assert-True ($launcherModule.Contains('$shortcut.Arguments = $powerShellArguments')) "GPT shortcut does not launch the installed controller"
 Assert-True ($launcherModule.Contains('$shortcut.IconLocation = "$IconPath,0"')) "GPT shortcut does not use its icon"
 Assert-True ($launcherModule.Contains('User Pinned\TaskBar')) "Existing GPT taskbar pins are not refreshed"
 Assert-True ($launcherModule.Contains('$temporaryExe = Join-Path $temporaryDirectory "Rightly GPT.exe"')) "GPT launcher metadata does not use a stable original filename"
@@ -185,6 +186,7 @@ Assert-True ($readme.Contains('## GPT and Claude integrations')) "README compari
 Assert-True ($readme.Contains('never writes to the Microsoft Store installation')) "README does not explain GPT architecture"
 Assert-True ($readme.Contains('What happens after an official update?')) "README does not explain update behavior"
 Assert-True ($readme.Contains('No scheduled task')) "README does not state that repair is user-triggered"
+Assert-True ($readme.Contains('Microsoft''s signed `powershell.exe`')) "README does not explain the Smart App Control-safe shortcut"
 Assert-True ($readme.Contains('## Code signing policy')) "README does not link the code signing policy"
 Assert-True (-not $readme.Contains('persistent in-place ASAR patch')) "README still documents removed GPT mode"
 Assert-True ($readme -notmatch '[\u0590-\u05FF\uFB1D-\uFB4F]') "README must be entirely English"

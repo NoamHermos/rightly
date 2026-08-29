@@ -3,7 +3,7 @@
 Installs the Rightly launcher for the official GPT Work / Codex application.
 
 .DESCRIPTION
-GPT is always corrected at launch through Rightly GPT.exe and a short-lived,
+GPT is always corrected at launch through a managed Windows PowerShell shortcut and a short-lived,
 loopback-only DevTools connection. The Microsoft Store package and app.asar are
 never modified. The launcher discovers the newest installed OpenAI.Codex
 package every time it runs, so a Store update does not invalidate its path.
@@ -265,6 +265,7 @@ function Install-LauncherOnlyRuntime {
 
     Remove-ObsoleteRuntimeFiles
     foreach ($shortcutPath in @(New-RightlyGptShortcuts -LauncherPath $Script:RuntimeExe `
+        -ScriptPath $Script:RuntimeLauncher `
         -WorkingDirectory $Script:RuntimeDir -IconPath $Script:RuntimeIcon)) {
         Write-Ok "Created or refreshed shortcut: $shortcutPath"
     }
@@ -284,9 +285,15 @@ function Remove-RightlyGptShortcuts {
     foreach ($item in @(Get-ChildItem -LiteralPath $taskbarDir -Filter "*.lnk" -ErrorAction SilentlyContinue)) {
         try {
             $shortcut = $shell.CreateShortcut($item.FullName)
-            if ($shortcut.TargetPath -and [System.IO.Path]::GetFullPath($shortcut.TargetPath).Equals(
-                    [System.IO.Path]::GetFullPath($Script:RuntimeExe),
-                    [System.StringComparison]::OrdinalIgnoreCase)) {
+            $powerShellPath = Join-Path $env:WINDIR "System32\WindowsPowerShell\v1.0\powershell.exe"
+            $targetsOldLauncher = $shortcut.TargetPath -and [System.IO.Path]::GetFullPath($shortcut.TargetPath).Equals(
+                [System.IO.Path]::GetFullPath($Script:RuntimeExe),
+                [System.StringComparison]::OrdinalIgnoreCase)
+            $targetsController = $shortcut.TargetPath -and [System.IO.Path]::GetFullPath($shortcut.TargetPath).Equals(
+                [System.IO.Path]::GetFullPath($powerShellPath),
+                [System.StringComparison]::OrdinalIgnoreCase) -and
+                $shortcut.Arguments.IndexOf($Script:RuntimeLauncher, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+            if ($targetsOldLauncher -or $targetsController) {
                 $paths += $item.FullName
             }
         } catch { }
@@ -313,10 +320,12 @@ function Uninstall-LauncherOnlyRuntime {
 }
 
 function Start-InstalledRightlyGpt {
-    if (-not (Test-Path -LiteralPath $Script:RuntimeExe -PathType Leaf)) {
+    if (-not (Test-Path -LiteralPath $Script:RuntimeLauncher -PathType Leaf)) {
         throw "Rightly GPT is not installed. Run Repair RTL and select GPT first."
     }
-    $process = Start-Process -FilePath $Script:RuntimeExe -Wait -PassThru
+    $powerShellPath = Join-Path $env:WINDIR "System32\WindowsPowerShell\v1.0\powershell.exe"
+    $arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$Script:RuntimeLauncher`""
+    $process = Start-Process -FilePath $powerShellPath -ArgumentList $arguments -Wait -PassThru
     if ($process.ExitCode -ne 0) {
         $log = Join-Path $Script:RuntimeDir "logs\gpt-runtime.log"
         throw "GPT opened without a verified Rightly payload. See $log"

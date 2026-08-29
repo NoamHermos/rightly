@@ -37,7 +37,7 @@ It creates these shortcuts when applicable:
 | **Rightly GPT** | Opens the official GPT application and verifies the RTL payload in its live renderer | Use this instead of the normal GPT shortcut |
 | **Repair RTL** | Downloads the latest Rightly revision and repairs GPT, Claude, or both | Use after an official application update or a Rightly update |
 
-The **Rightly GPT** executable is also added to the Start menu. Existing taskbar pins that already target the managed launcher are refreshed during repair.
+The **Rightly GPT** PowerShell shortcut is also added to the Start menu. Existing taskbar pins that already target the managed launcher are refreshed during repair.
 
 Claude continues to use its normal official shortcut after installation. Rightly never creates a copied GPT or Claude application.
 
@@ -48,7 +48,7 @@ Both integrations use the same direction rules, but the official applications re
 | Behavior | GPT Work / Codex | Claude Desktop / Code |
 | --- | --- | --- |
 | Official package | Protected Microsoft Store package | Official desktop installation whose application files can currently be patched |
-| Rightly delivery | Dedicated launch-time executable and a short-lived loopback injector | Verified in-place patch with backup and rollback support |
+| Rightly delivery | Managed PowerShell shortcut and a short-lived loopback injector | Verified in-place patch with backup and rollback support |
 | Does Rightly replace `app.asar`? | No | Claude's verified patch engine updates the required application resources |
 | Normal way to open | **Rightly GPT** | The normal Claude shortcut |
 | Work performed at startup | The launcher injects and verifies each newly created GPT renderer | No Rightly startup process is required after patching |
@@ -61,7 +61,7 @@ GPT's Store `app.asar` is intentionally left untouched. Current Windows builds d
 
 ## Everyday GPT behavior
 
-**Rightly GPT.exe** is a small native Windows launcher with a branded progress window. It reports whether it is checking, opening, injecting, or verifying GPT.
+**Rightly GPT** is a managed shortcut to the installed controller script. The shortcut targets Microsoft's signed `powershell.exe`, avoiding Smart App Control blocks caused by an unsigned custom launcher.
 
 Its behavior depends on GPT's current state:
 
@@ -74,7 +74,7 @@ Its behavior depends on GPT's current state:
 | Open without a verified correction | Closes that uncorrected process tree once and reopens the official app through Rightly |
 | Launcher clicked twice | A Windows single-instance lock keeps the first launch active; the second click reports that GPT is already starting |
 
-On success, the progress window confirms that Rightly is active and closes automatically. On failure, it remains visible with a clear message and a path to the diagnostic log.
+On failure, the controller displays a clear message and a path to the diagnostic log.
 
 ## How it works
 
@@ -99,7 +99,7 @@ DOM mutations are queued and processed incrementally. Newly streamed messages an
 
 The GPT integration never writes to the Microsoft Store installation:
 
-1. `Rightly GPT.exe` starts its hidden PowerShell controller and shows a native status window.
+1. The **Rightly GPT** shortcut starts the installed controller through Microsoft's signed Windows PowerShell host.
 2. The controller discovers the newest installed `OpenAI.Codex` package instead of storing a version-specific executable path.
 3. It reserves a random local port bound to `127.0.0.1` and activates the official package with Chromium's loopback DevTools endpoint.
 4. A short-lived Node.js injector connects only to page-specific local WebSockets.
@@ -119,7 +119,7 @@ The integration removes known legacy automatic patchers and copied-app shortcuts
 
 ## What happens after an official update?
 
-An official GPT update installs a new versioned Store directory. It does not overwrite **Rightly GPT.exe**, which is stored separately under the current user profile. The launcher discovers the new package on its next run, so an update does not make its shortcut point to an obsolete GPT path.
+An official GPT update installs a new versioned Store directory. It does not overwrite Rightly's controller or managed shortcut, which are stored separately under the current user profile. The controller discovers the new package on its next run, so an update does not make its shortcut point to an obsolete GPT path.
 
 However, a major GPT update can change renderer structure or security behavior. Run **Repair RTL** after an update so the launcher, injector, and payload are refreshed from the latest Rightly revision. The launcher's live marker verification prevents a silent success when the updated renderer is no longer compatible.
 

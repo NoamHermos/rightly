@@ -43,7 +43,7 @@ $installerModule = Get-Content -LiteralPath $paths.InstallerModule -Raw
 Assert-True ($patcher.Contains('architecture = "launcher-only-loopback-runtime"')) "Launcher-only GPT architecture is missing"
 Assert-True ($patcher.Contains('Get-AppxPackage -Name "OpenAI.Codex"')) "Latest official GPT package discovery is missing"
 Assert-True ($patcher.Contains('officialPackageModified = $false')) "GPT state does not explicitly record that the package is untouched"
-Assert-True ($patcher.Contains('Start-Process -FilePath $Script:RuntimeExe -Wait -PassThru')) "The GPT action does not run the dedicated executable"
+Assert-True ($patcher.Contains('Start-Process -FilePath $powerShellPath -ArgumentList $arguments -Wait -PassThru')) "The GPT action does not run the controller through Windows PowerShell"
 Assert-True ($patcher.Contains('Restore-LegacyPersistentPatch')) "Safe migration from old ASAR releases is missing"
 Assert-True ($patcher.Contains('packageFullName -ne $Official.PackageFullName')) "Legacy state is not isolated by package version"
 Assert-True ($patcher.Contains('rollback backup failed SHA-256 verification')) "Legacy rollback verification is missing"
@@ -69,10 +69,12 @@ Assert-True ($runtimeLauncher.Contains('SetForegroundWindow')) "A corrected GPT 
 Assert-True ($injector.Contains('verifyRunningInstance')) "The injector has no marker-only verification mode"
 Assert-True ($injector.Contains('hasRightlyMarker')) "The injector does not inspect the renderer marker"
 
-# The native EXE supplies the GUI, icon, and duplicate-launch protection.
+# The shortcut uses Microsoft's signed PowerShell host; the native EXE remains
+# buildable for a future trusted-signing release.
 Assert-True ($patcher.Contains('New-RightlyGptLauncher')) "The native launcher is not built during installation"
 Assert-True ($patcher.Contains('New-RightlyGptShortcuts')) "Managed GPT shortcuts are not created"
-Assert-True ($launcherModule.Contains('$shortcut.TargetPath = $LauncherPath')) "Rightly GPT shortcuts do not target the native executable"
+Assert-True ($launcherModule.Contains('$shortcut.TargetPath = $powerShellPath')) "Rightly GPT shortcuts do not target Windows PowerShell"
+Assert-True ($launcherModule.Contains('$shortcut.Arguments = $powerShellArguments')) "Rightly GPT shortcuts do not launch the controller script"
 Assert-True ($launcherModule.Contains('$shortcut.IconLocation = "$IconPath,0"')) "Rightly GPT shortcuts do not use the branded icon"
 Assert-True ($launcherModule.Contains('User Pinned\TaskBar')) "Existing taskbar pins are not refreshed"
 Assert-True ($nativeLauncher.Contains('MutexName')) "The launcher has no single-instance lock"

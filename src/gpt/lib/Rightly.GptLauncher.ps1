@@ -78,15 +78,22 @@ function New-RightlyGptShortcuts {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string] $LauncherPath,
+        [Parameter(Mandatory)][string] $ScriptPath,
         [Parameter(Mandatory)][string] $WorkingDirectory,
         [Parameter(Mandatory)][string] $IconPath
     )
 
-    foreach ($path in @($LauncherPath, $IconPath)) {
+    foreach ($path in @($LauncherPath, $ScriptPath, $IconPath)) {
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
             throw "Rightly GPT shortcut dependency is missing: $path"
         }
     }
+
+    $powerShellPath = Join-Path $env:WINDIR "System32\WindowsPowerShell\v1.0\powershell.exe"
+    if (-not (Test-Path -LiteralPath $powerShellPath -PathType Leaf)) {
+        throw "Windows PowerShell is unavailable at $powerShellPath"
+    }
+    $powerShellArguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$ScriptPath`""
 
     $shortcutPaths = @(
         (Join-Path ([Environment]::GetFolderPath("Desktop")) "Rightly GPT.lnk"),
@@ -95,14 +102,20 @@ function New-RightlyGptShortcuts {
     $shell = New-Object -ComObject WScript.Shell
 
     # Windows owns taskbar pin creation, but an existing pin is still a normal
-    # shortcut. Refresh only pins that already target this managed launcher.
+    # shortcut. Refresh only pins that already target the old EXE or the managed
+    # PowerShell controller.
     $taskbarDirectory = Join-Path $env:APPDATA "Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar"
     foreach ($pinnedPath in @(Get-ChildItem -LiteralPath $taskbarDirectory -Filter "*.lnk" -ErrorAction SilentlyContinue)) {
         try {
             $pinned = $shell.CreateShortcut($pinnedPath.FullName)
-            if ([System.IO.Path]::GetFullPath($pinned.TargetPath).Equals(
-                    [System.IO.Path]::GetFullPath($LauncherPath),
-                    [System.StringComparison]::OrdinalIgnoreCase)) {
+            $targetsOldLauncher = [System.IO.Path]::GetFullPath($pinned.TargetPath).Equals(
+                [System.IO.Path]::GetFullPath($LauncherPath),
+                [System.StringComparison]::OrdinalIgnoreCase)
+            $targetsController = [System.IO.Path]::GetFullPath($pinned.TargetPath).Equals(
+                [System.IO.Path]::GetFullPath($powerShellPath),
+                [System.StringComparison]::OrdinalIgnoreCase) -and
+                $pinned.Arguments.IndexOf($ScriptPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+            if ($targetsOldLauncher -or $targetsController) {
                 $shortcutPaths += $pinnedPath.FullName
             }
         } catch { }
@@ -111,9 +124,9 @@ function New-RightlyGptShortcuts {
     foreach ($shortcutPath in @($shortcutPaths | Select-Object -Unique)) {
         New-Item -ItemType Directory -Path (Split-Path -Parent $shortcutPath) -Force | Out-Null
         $shortcut = $shell.CreateShortcut($shortcutPath)
-        $shortcut.TargetPath = $LauncherPath
+        $shortcut.TargetPath = $powerShellPath
         $shortcut.WorkingDirectory = $WorkingDirectory
-        $shortcut.Arguments = ""
+        $shortcut.Arguments = $powerShellArguments
         $shortcut.IconLocation = "$IconPath,0"
         $shortcut.Description = "Rightly RTL for the official GPT Work / Codex app"
         $shortcut.Save()
