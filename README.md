@@ -73,8 +73,18 @@ Its behavior depends on GPT's current state:
 | Running only in the notification area | Preserves the corrected process, creates a new official window, applies Rightly to the new renderer, and verifies it |
 | Open without a verified correction | Closes that uncorrected process tree once and reopens the official app through Rightly |
 | Launcher clicked twice | A Windows single-instance lock keeps the first launch active; the second click reports that GPT is already starting |
+| Windows started GPT suspended | Resumes the frozen process so it can finish starting and open its debugging endpoint |
 
 On failure, the controller displays a clear message and a path to the diagnostic log.
+
+### Opening GPT without a correction
+
+Windows sometimes starts the packaged GPT app suspended and never resumes it. The
+app then sits at a single suspended thread with no window, and because GPT is
+single-instance, that frozen process silently swallows every later launch, so GPT
+appears not to open at all. A separate **ChatGPT (Fix)** desktop shortcut clears
+such a leftover, opens GPT, and resumes it if Windows freezes it again. It applies
+no RTL correction; use it when the goal is simply to get GPT open.
 
 ## How it works
 
@@ -161,14 +171,13 @@ Choose GPT, Claude, or both.
 
 Rightly does not send conversation content to a Rightly server. The GPT debugging endpoint accepts loopback connections only, and the injector disconnects after live verification.
 
-## Code signing policy
+## No custom executable
 
-The Rightly GPT launcher's signing scope, privacy statement, team roles, and
-reproducible GitHub build process are documented in the
-[code signing policy](CODE_SIGNING_POLICY.md). Rightly is preparing the launcher
-for free open-source signing through SignPath.io, with the certificate provided
-by SignPath Foundation. Until the public signing setup is approved and active,
-release artifacts must be treated as unsigned.
+Rightly ships no compiled binary. Earlier releases built a small unsigned .NET
+launcher, but Windows Smart App Control blocked it outright, and it only wrapped
+work the PowerShell scripts already do. Every shortcut now runs Microsoft's own
+signed `powershell.exe`, so there is nothing left for Smart App Control to block
+and nothing that needs code signing.
 
 Rightly is an independent, unofficial project and is not affiliated with OpenAI or Anthropic. Application updates can affect compatibility, and the project is used at your own risk.
 

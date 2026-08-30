@@ -26,19 +26,24 @@ $Script:ModuleRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Script:ProjectRoot = Split-Path -Parent (Split-Path -Parent $Script:ModuleRoot)
 $Script:PayloadPath = Join-Path $Script:ModuleRoot "codex-rtl-payload.js"
 $Script:InjectorPath = Join-Path $Script:ModuleRoot "gpt-rtl-cdp.js"
-$Script:PowerShellLauncherPath = Join-Path $Script:ModuleRoot "launch-gpt.ps1"
-$Script:LauncherSourcePath = Join-Path $Script:ModuleRoot "Rightly.Gpt.Launcher.cs"
 $Script:LauncherModulePath = Join-Path $Script:ModuleRoot "lib\Rightly.GptLauncher.ps1"
 $Script:LauncherIconPath = Join-Path $Script:ProjectRoot "assets\rightly-gpt.ico"
 
 $Script:RuntimeDir = Join-Path $env:LOCALAPPDATA "Programs\Rightly\GPT"
-$Script:RuntimeExe = Join-Path $Script:RuntimeDir "Rightly GPT.exe"
 $Script:RuntimeIcon = Join-Path $Script:RuntimeDir "Rightly GPT.ico"
 $Script:RuntimeState = Join-Path $Script:RuntimeDir "state.json"
+# The shortcuts start the status window, which runs the launcher and reports its
+# progress. Programmatic launches use launch-gpt.ps1 directly so the exit code
+# still reflects whether the RTL payload was verified.
+$Script:RuntimeUi = Join-Path $Script:RuntimeDir "rightly-gpt-ui.ps1"
+$Script:RuntimeLauncher = Join-Path $Script:RuntimeDir "launch-gpt.ps1"
+$Script:RuntimeOpener = Join-Path $Script:RuntimeDir "open-chatgpt.ps1"
 $Script:RuntimeFileNames = @(
     "codex-rtl-payload.js",
     "gpt-rtl-cdp.js",
-    "launch-gpt.ps1"
+    "launch-gpt.ps1",
+    "rightly-gpt-ui.ps1",
+    "open-chatgpt.ps1"
 )
 
 # Releases before the launcher-only design could modify app.asar. These paths
@@ -227,7 +232,10 @@ function Copy-RuntimeFile {
 }
 
 function Remove-ObsoleteRuntimeFiles {
-    $allowedNames = @($Script:RuntimeFileNames) + @("Rightly GPT.exe", "Rightly GPT.ico", "state.json", "logs")
+    # "Rightly GPT.exe" is deliberately absent: leaving it out makes an upgrade
+    # delete the unsigned launcher that Smart App Control used to block.
+    # "user-data" is the dedicated Chromium profile the launcher starts GPT with.
+    $allowedNames = @($Script:RuntimeFileNames) + @("Rightly GPT.ico", "state.json", "logs", "user-data")
     foreach ($item in @(Get-ChildItem -LiteralPath $Script:RuntimeDir -Force -ErrorAction SilentlyContinue)) {
         if ($item.Name -notin $allowedNames) {
             Remove-Item -LiteralPath $item.FullName -Recurse -Force
@@ -249,8 +257,6 @@ function Install-LauncherOnlyRuntime {
     New-Item -ItemType Directory -Path $Script:RuntimeDir -Force | Out-Null
     foreach ($name in $Script:RuntimeFileNames) { Copy-RuntimeFile $name }
     Copy-Item -LiteralPath $Script:LauncherIconPath -Destination $Script:RuntimeIcon -Force
-    [void] (New-RightlyGptLauncher -SourcePath $Script:LauncherSourcePath `
-        -DestinationPath $Script:RuntimeExe -IconPath $Script:RuntimeIcon)
 
     [ordered]@{
         architecture = "launcher-only-loopback-runtime"
@@ -258,14 +264,14 @@ function Install-LauncherOnlyRuntime {
         officialPackageVersion = $official.Version
         payloadHash = Get-Sha256 (Join-Path $Script:RuntimeDir "codex-rtl-payload.js")
         injectorHash = Get-Sha256 (Join-Path $Script:RuntimeDir "gpt-rtl-cdp.js")
-        launcherHash = Get-Sha256 $Script:RuntimeExe
+        launcherHash = Get-Sha256 $Script:RuntimeLauncher
         installedAt = (Get-Date).ToString("o")
         officialPackageModified = $false
     } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $Script:RuntimeState -Encoding UTF8
 
     Remove-ObsoleteRuntimeFiles
-    foreach ($shortcutPath in @(New-RightlyGptShortcuts -LauncherPath $Script:RuntimeExe `
-        -ScriptPath $Script:RuntimeLauncher `
+    foreach ($shortcutPath in @(New-RightlyGptShortcuts -ScriptPath $Script:RuntimeUi `
+        -OpenerScriptPath $Script:RuntimeOpener `
         -WorkingDirectory $Script:RuntimeDir -IconPath $Script:RuntimeIcon)) {
         Write-Ok "Created or refreshed shortcut: $shortcutPath"
     }
@@ -277,22 +283,28 @@ function Install-LauncherOnlyRuntime {
 
 function Remove-RightlyGptShortcuts {
     $shell = New-Object -ComObject WScript.Shell
+    $desktop = [Environment]::GetFolderPath("Desktop")
     $paths = @(
-        (Join-Path ([Environment]::GetFolderPath("Desktop")) "Rightly GPT.lnk"),
+        (Join-Path $desktop "Rightly GPT.lnk"),
+        (Join-Path $desktop "ChatGPT (Fix).lnk"),
         (Join-Path (Join-Path ([Environment]::GetFolderPath("Programs")) "Rightly") "Rightly GPT.lnk")
     )
+    # Releases up to 26.8 shipped an unsigned "Rightly GPT.exe" launcher.
+    $legacyExe = Join-Path $Script:RuntimeDir "Rightly GPT.exe"
     $taskbarDir = Join-Path $env:APPDATA "Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar"
     foreach ($item in @(Get-ChildItem -LiteralPath $taskbarDir -Filter "*.lnk" -ErrorAction SilentlyContinue)) {
         try {
             $shortcut = $shell.CreateShortcut($item.FullName)
+            if (-not $shortcut.TargetPath) { continue }
             $powerShellPath = Join-Path $env:WINDIR "System32\WindowsPowerShell\v1.0\powershell.exe"
-            $targetsOldLauncher = $shortcut.TargetPath -and [System.IO.Path]::GetFullPath($shortcut.TargetPath).Equals(
-                [System.IO.Path]::GetFullPath($Script:RuntimeExe),
+            $target = [System.IO.Path]::GetFullPath($shortcut.TargetPath)
+            $targetsOldLauncher = $target.Equals(
+                [System.IO.Path]::GetFullPath($legacyExe),
                 [System.StringComparison]::OrdinalIgnoreCase)
-            $targetsController = $shortcut.TargetPath -and [System.IO.Path]::GetFullPath($shortcut.TargetPath).Equals(
+            $targetsController = $target.Equals(
                 [System.IO.Path]::GetFullPath($powerShellPath),
                 [System.StringComparison]::OrdinalIgnoreCase) -and
-                $shortcut.Arguments.IndexOf($Script:RuntimeLauncher, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+                ($shortcut.Arguments.IndexOf($Script:RuntimeDir, [System.StringComparison]::OrdinalIgnoreCase) -ge 0)
             if ($targetsOldLauncher -or $targetsController) {
                 $paths += $item.FullName
             }
@@ -348,7 +360,7 @@ function Show-LauncherOnlyStatus {
         Write-Warn "The installed GPT runtime uses an obsolete architecture. Run Repair RTL."
         return
     }
-    foreach ($name in @($Script:RuntimeFileNames + @("Rightly GPT.exe", "Rightly GPT.ico"))) {
+    foreach ($name in @($Script:RuntimeFileNames + @("Rightly GPT.ico"))) {
         if (-not (Test-Path -LiteralPath (Join-Path $Script:RuntimeDir $name) -PathType Leaf)) {
             Write-Warn "Runtime file is missing: $name"
             return

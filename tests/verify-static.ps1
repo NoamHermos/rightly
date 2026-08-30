@@ -1,4 +1,4 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
 
 function Assert-True {
     param([bool] $Condition, [string] $Message)
@@ -14,10 +14,7 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $required = @(
     "README.md",
     "LICENSE",
-    "CODE_SIGNING_POLICY.md",
     ".github\SECURITY.md",
-    ".github\workflows\sign-rightly-gpt.yml",
-    ".signpath\artifact-configuration.xml",
     "docs\THIRD_PARTY_NOTICES.md",
     "installer\install.ps1",
     "installer\install-online.ps1",
@@ -35,7 +32,8 @@ $required = @(
     "src\gpt\codex-rtl-payload.js",
     "src\gpt\gpt-rtl-cdp.js",
     "src\gpt\launch-gpt.ps1",
-    "src\gpt\Rightly.Gpt.Launcher.cs",
+    "src\gpt\rightly-gpt-ui.ps1",
+    "src\gpt\open-chatgpt.ps1",
     "src\gpt\lib\Rightly.GptLauncher.ps1",
     "src\claude\patch.ps1",
     "src\claude\claude-rtl-payload.js",
@@ -81,22 +79,21 @@ $patcher = Read-RepoFile "src\gpt\patch.ps1"
 $launcherModule = Read-RepoFile "src\gpt\lib\Rightly.GptLauncher.ps1"
 $runtimeLauncher = Read-RepoFile "src\gpt\launch-gpt.ps1"
 $runtimeInjector = Read-RepoFile "src\gpt\gpt-rtl-cdp.js"
-$nativeLauncher = Read-RepoFile "src\gpt\Rightly.Gpt.Launcher.cs"
+$statusWindow = Read-RepoFile "src\gpt\rightly-gpt-ui.ps1"
+$opener = Read-RepoFile "src\gpt\open-chatgpt.ps1"
 $payload = Read-RepoFile "src\gpt\codex-rtl-payload.js"
 $claudePatcher = Read-RepoFile "src\claude\patch.ps1"
 $repair = Read-RepoFile "installer\run-repair.ps1"
 $readme = Read-RepoFile "README.md"
 $thirdParty = Read-RepoFile "docs\THIRD_PARTY_NOTICES.md"
-$signingPolicy = Read-RepoFile "CODE_SIGNING_POLICY.md"
-$signingWorkflow = Read-RepoFile ".github\workflows\sign-rightly-gpt.yml"
-$signPathArtifact = Read-RepoFile ".signpath\artifact-configuration.xml"
 
 # GPT only installs its dedicated runtime and never mutates WindowsApps.
 Assert-True ($patcher.Contains('architecture = "launcher-only-loopback-runtime"')) "Launcher-only GPT architecture is missing"
 Assert-True ($patcher.Contains('officialPackageModified = $false')) "Untouched official package is not represented in state"
 Assert-True ($patcher.Contains('Get-AppxPackage -Name "OpenAI.Codex"')) "Dynamic official package discovery is missing"
-Assert-True ($patcher.Contains('$Script:RuntimeExe')) "Dedicated GPT executable is missing"
-Assert-True ($patcher.Contains('New-RightlyGptLauncher')) "Dedicated GPT executable is not built"
+Assert-True (-not $patcher.Contains('$Script:RuntimeExe')) "Removed native GPT executable is still installed"
+Assert-True (-not $patcher.Contains('New-RightlyGptLauncher')) "Removed native GPT executable is still built"
+Assert-True ($patcher.Contains('$Script:RuntimeUi')) "GPT shortcuts do not start the status window"
 Assert-True ($patcher.Contains('New-RightlyGptShortcuts')) "GPT launcher shortcuts are not created"
 Assert-True (-not $patcher.Contains('New-RightlyGptAsar')) "ASAR builder remains active"
 Assert-True (-not $patcher.Contains('Grant-AsarWriteAccess')) "WindowsApps ACL mutation remains active"
@@ -119,9 +116,13 @@ Assert-True ($launcherModule.Contains('$shortcut.TargetPath = $powerShellPath'))
 Assert-True ($launcherModule.Contains('$shortcut.Arguments = $powerShellArguments')) "GPT shortcut does not launch the installed controller"
 Assert-True ($launcherModule.Contains('$shortcut.IconLocation = "$IconPath,0"')) "GPT shortcut does not use its icon"
 Assert-True ($launcherModule.Contains('User Pinned\TaskBar')) "Existing GPT taskbar pins are not refreshed"
-Assert-True ($launcherModule.Contains('$temporaryExe = Join-Path $temporaryDirectory "Rightly GPT.exe"')) "GPT launcher metadata does not use a stable original filename"
-Assert-True ($nativeLauncher.Contains('MutexName')) "GPT launcher has no single-instance lock"
-Assert-True ($nativeLauncher.Contains('class StatusWindow')) "GPT launcher has no progress GUI"
+Assert-True (-not $launcherModule.Contains('New-RightlyGptLauncher')) "GPT launcher module still compiles an executable"
+Assert-True ($launcherModule.Contains('ChatGPT (Fix).lnk')) "The suspended-app opener shortcut is not created"
+Assert-True ($statusWindow.Contains('Local\RightlyGptLauncher')) "GPT launcher has no single-instance lock"
+Assert-True ($statusWindow.Contains('System.Windows.Forms.ProgressBar')) "GPT launcher has no progress GUI"
+Assert-True ($statusWindow.Contains('-StatusFile')) "Status window does not read launcher progress"
+Assert-True ($opener.Contains('NtResumeProcess')) "GPT opener cannot resume a suspended app"
+Assert-True ($runtimeLauncher.Contains('Resume-SuspendedCodex')) "Launcher does not resume a suspended GPT process"
 Assert-True ($runtimeLauncher.Contains('Test-RunningRightlyPayload')) "Existing GPT payload is not verified"
 Assert-True ($runtimeLauncher.Contains('Test-RunningRightlyHost')) "Tray-only corrected GPT is not recognized"
 Assert-True ($runtimeLauncher.Contains('Start-Injector $port')) "New GPT renderers are not injected"
@@ -178,7 +179,7 @@ foreach ($relative in @("assets\rightly.ico", "assets\rightly-gpt.ico")) {
 
 # Repository and public documentation describe only the current design.
 Assert-True (-not (Test-Path -LiteralPath (Join-Path $repoRoot "OLD"))) "Legacy copied-app archive must not ship"
-$allowedRootFiles = @(".gitattributes", ".gitignore", "CODE_SIGNING_POLICY.md", "LICENSE", "README.md")
+$allowedRootFiles = @(".gitattributes", ".gitignore", "LICENSE", "README.md")
 $unexpectedRootFiles = @(Get-ChildItem -LiteralPath $repoRoot -File -Force | Where-Object Name -NotIn $allowedRootFiles)
 Assert-True ($unexpectedRootFiles.Count -eq 0) "Unexpected root files remain: $($unexpectedRootFiles.Name -join ', ')"
 Assert-True ($readme.Contains('NoamHermos/rightly/main/installer/install-online.ps1')) "README installer URL is wrong"
@@ -187,18 +188,11 @@ Assert-True ($readme.Contains('never writes to the Microsoft Store installation'
 Assert-True ($readme.Contains('What happens after an official update?')) "README does not explain update behavior"
 Assert-True ($readme.Contains('No scheduled task')) "README does not state that repair is user-triggered"
 Assert-True ($readme.Contains('Microsoft''s signed `powershell.exe`')) "README does not explain the Smart App Control-safe shortcut"
-Assert-True ($readme.Contains('## Code signing policy')) "README does not link the code signing policy"
 Assert-True (-not $readme.Contains('persistent in-place ASAR patch')) "README still documents removed GPT mode"
 Assert-True ($readme -notmatch '[\u0590-\u05FF\uFB1D-\uFB4F]') "README must be entirely English"
 Assert-True ($readme -notmatch '(?m)!\[') "README must not embed Markdown images"
 Assert-True ($thirdParty.Contains('Copyright (c) 2026 RT-AI')) "Original MIT attribution is missing"
 Assert-True ($thirdParty.Contains('Copyright (c) 2026 shraga100')) "Claude engine attribution is missing"
-Assert-True ($signingPolicy.Contains('Free code signing provided by SignPath.io, certificate by SignPath Foundation.')) "SignPath Foundation attribution is missing"
-Assert-True ($signingPolicy.Contains('SIGNPATH_API_TOKEN')) "Signing setup does not document its secret"
-Assert-True ($signingWorkflow.Contains('signpath/github-action-submit-signing-request@v2')) "SignPath GitHub action is missing"
-Assert-True ($signingWorkflow.Contains('vars.SIGNPATH_ORGANIZATION_ID')) "SignPath workflow is not inert before account setup"
-Assert-True ($signPathArtifact.Contains('<authenticode-sign')) "SignPath artifact does not request Authenticode signing"
-Assert-True ($signPathArtifact.Contains('product-name="Rightly GPT"')) "SignPath artifact does not restrict product metadata"
 
 & node.exe (Join-Path $PSScriptRoot "direction.test.js")
 Assert-True ($LASTEXITCODE -eq 0) "GPT direction behavior tests failed"

@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param([switch] $SkipInstalledBuild)
 
 $ErrorActionPreference = "Stop"
@@ -14,7 +14,8 @@ $paths = @{
     Payload = Join-Path $repoRoot "src\gpt\codex-rtl-payload.js"
     Injector = Join-Path $repoRoot "src\gpt\gpt-rtl-cdp.js"
     RuntimeLauncher = Join-Path $repoRoot "src\gpt\launch-gpt.ps1"
-    LauncherSource = Join-Path $repoRoot "src\gpt\Rightly.Gpt.Launcher.cs"
+    StatusWindow = Join-Path $repoRoot "src\gpt\rightly-gpt-ui.ps1"
+    Opener = Join-Path $repoRoot "src\gpt\open-chatgpt.ps1"
     LauncherModule = Join-Path $repoRoot "src\gpt\lib\Rightly.GptLauncher.ps1"
     Installer = Join-Path $repoRoot "installer\install.ps1"
     InstallerModule = Join-Path $repoRoot "installer\lib\Rightly.Install.ps1"
@@ -36,7 +37,8 @@ $payload = Get-Content -LiteralPath $paths.Payload -Raw
 $injector = Get-Content -LiteralPath $paths.Injector -Raw
 $runtimeLauncher = Get-Content -LiteralPath $paths.RuntimeLauncher -Raw
 $launcherModule = Get-Content -LiteralPath $paths.LauncherModule -Raw
-$nativeLauncher = Get-Content -LiteralPath $paths.LauncherSource -Raw
+$statusWindow = Get-Content -LiteralPath $paths.StatusWindow -Raw
+$opener = Get-Content -LiteralPath $paths.Opener -Raw
 $installerModule = Get-Content -LiteralPath $paths.InstallerModule -Raw
 
 # GPT has one supported architecture: a dedicated launcher outside WindowsApps.
@@ -71,16 +73,19 @@ Assert-True ($injector.Contains('hasRightlyMarker')) "The injector does not insp
 
 # The shortcut uses Microsoft's signed PowerShell host; the native EXE remains
 # buildable for a future trusted-signing release.
-Assert-True ($patcher.Contains('New-RightlyGptLauncher')) "The native launcher is not built during installation"
+Assert-True (-not $patcher.Contains('New-RightlyGptLauncher')) "The removed native launcher is still built during installation"
+Assert-True ($patcher.Contains('$Script:RuntimeUi')) "Shortcuts do not start the status window"
 Assert-True ($patcher.Contains('New-RightlyGptShortcuts')) "Managed GPT shortcuts are not created"
 Assert-True ($launcherModule.Contains('$shortcut.TargetPath = $powerShellPath')) "Rightly GPT shortcuts do not target Windows PowerShell"
 Assert-True ($launcherModule.Contains('$shortcut.Arguments = $powerShellArguments')) "Rightly GPT shortcuts do not launch the controller script"
 Assert-True ($launcherModule.Contains('$shortcut.IconLocation = "$IconPath,0"')) "Rightly GPT shortcuts do not use the branded icon"
 Assert-True ($launcherModule.Contains('User Pinned\TaskBar')) "Existing taskbar pins are not refreshed"
-Assert-True ($nativeLauncher.Contains('MutexName')) "The launcher has no single-instance lock"
-Assert-True ($nativeLauncher.Contains('Rightly GPT is already starting')) "Duplicate launches have no user message"
-Assert-True ($nativeLauncher.Contains('class StatusWindow')) "The launcher has no native status window"
-Assert-True ($nativeLauncher.Contains('BackgroundWorker')) "The launcher can block its GUI thread"
+Assert-True ($statusWindow.Contains('Local\RightlyGptLauncher')) "The launcher has no single-instance lock"
+Assert-True ($statusWindow.Contains('Rightly GPT is already starting')) "Duplicate launches have no user message"
+Assert-True ($statusWindow.Contains('System.Windows.Forms.ProgressBar')) "The launcher has no status window"
+Assert-True ($statusWindow.Contains('$timer.Add_Tick')) "The launcher polls progress on its GUI thread"
+Assert-True ($opener.Contains('NtResumeProcess')) "The opener cannot resume a suspended GPT app"
+Assert-True ($runtimeLauncher.Contains('Resume-SuspendedCodex')) "The launcher does not resume a suspended GPT process"
 
 # GPT-only installation remains unelevated; Claude keeps its administrator flow.
 Assert-True ($installerModule.Contains('if ($Target -eq "GptWork") { return $false }')) "GPT-only installation still requests elevation"
@@ -105,17 +110,13 @@ Assert-True ($LASTEXITCODE -eq 0) "GPT injector has JavaScript syntax errors"
 & node.exe (Join-Path $PSScriptRoot "direction.test.js")
 Assert-True ($LASTEXITCODE -eq 0) "GPT direction behavior tests failed"
 
-# Compile the launcher exactly as installation does, without opening GPT.
-$sandbox = Join-Path ([System.IO.Path]::GetTempPath()) ("rightly-gpt-launcher-test-" + [guid]::NewGuid().ToString("N"))
-try {
-    New-Item -ItemType Directory -Path $sandbox | Out-Null
-    . $paths.LauncherModule
-    $testExe = Join-Path $sandbox "Rightly GPT.exe"
-    [void] (New-RightlyGptLauncher -SourcePath $paths.LauncherSource -DestinationPath $testExe `
-        -IconPath (Join-Path $repoRoot "assets\rightly-gpt.ico"))
-    Assert-True ((Get-Item -LiteralPath $testExe).Length -gt 4096) "Compiled GPT launcher is invalid"
-} finally {
-    Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
+# Every shipped script must at least parse, since nothing is compiled any more.
+foreach ($scriptPath in @($paths.Patcher, $paths.RuntimeLauncher, $paths.LauncherModule,
+    $paths.StatusWindow, $paths.Opener)) {
+    $parseErrors = $null
+    [void][System.Management.Automation.Language.Parser]::ParseFile(
+        $scriptPath, [ref] $null, [ref] $parseErrors)
+    Assert-True (@($parseErrors).Count -eq 0) "PowerShell script has syntax errors: $scriptPath"
 }
 
 if (-not $SkipInstalledBuild) {
@@ -125,7 +126,7 @@ if (-not $SkipInstalledBuild) {
     $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
     Assert-True ($state.architecture -eq "launcher-only-loopback-runtime") "Installed GPT state uses an obsolete architecture"
     Assert-True (-not $state.officialPackageModified) "Installed state incorrectly claims that GPT was modified"
-    foreach ($name in @("codex-rtl-payload.js", "gpt-rtl-cdp.js", "launch-gpt.ps1", "Rightly GPT.exe", "Rightly GPT.ico")) {
+    foreach ($name in @("codex-rtl-payload.js", "gpt-rtl-cdp.js", "launch-gpt.ps1", "rightly-gpt-ui.ps1", "open-chatgpt.ps1", "Rightly GPT.ico")) {
         Assert-True (Test-Path -LiteralPath (Join-Path $runtimeRoot $name) -PathType Leaf) "Installed GPT runtime file is missing: $name"
     }
     $payloadHash = (Get-FileHash -LiteralPath (Join-Path $runtimeRoot "codex-rtl-payload.js") -Algorithm SHA256).Hash.ToLowerInvariant()

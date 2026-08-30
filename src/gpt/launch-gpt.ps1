@@ -14,10 +14,23 @@ $Script:LogDir = Join-Path $Script:Root "logs"
 $Script:LogPath = Join-Path $Script:LogDir "gpt-runtime.log"
 $Script:ResultPath = Join-Path $Script:LogDir "gpt-startup-result.json"
 
+# Chromium 136+ (this app now ships a Chrome 151 "owl" runtime) refuses to open
+# the DevTools remote-debugging port when the app runs on its DEFAULT profile
+# directory. A dedicated, non-default --user-data-dir re-enables it. This profile
+# persists between launches, so the one-time ChatGPT sign-in sticks and the chat
+# history (which lives server-side) returns immediately after logging in.
+$Script:UserDataDir = Join-Path $Script:Root "user-data"
+
 function Write-RightlyLog {
     param([string] $Message)
     New-Item -ItemType Directory -Path $Script:LogDir -Force | Out-Null
-    Add-Content -LiteralPath $Script:LogPath -Value "$(Get-Date -Format o) $Message" -Encoding UTF8
+    $line = "$(Get-Date -Format o) $Message"
+    # The Node injector appends to the same log file concurrently; retry on the
+    # brief sharing violations that can otherwise abort the launcher mid-startup.
+    for ($attempt = 0; $attempt -lt 5; $attempt++) {
+        try { Add-Content -LiteralPath $Script:LogPath -Value $line -Encoding UTF8; return }
+        catch { Start-Sleep -Milliseconds 100 }
+    }
 }
 
 function Set-RightlyStatus {
@@ -314,6 +327,68 @@ function Wait-InjectorVerification {
     throw "GPT opened, but the Rightly payload marker was not verified within 60 seconds."
 }
 
+function Resume-SuspendedCodex {
+    <#
+    On this machine the packaged GPT app is regularly created SUSPENDED and never
+    resumed: the main process sits at one suspended thread, ~2 MB, no child
+    processes, no window - and therefore never opens its DevTools port either.
+    Resuming it explicitly lets the app finish starting. Verified: 1 thread/2 MB
+    becomes 62 threads/340 MB with a real window immediately after the resume.
+    #>
+    param([string] $AppDir, [int] $TimeoutSeconds = 25)
+
+    if (-not ("RightlyProcessResume" -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class RightlyProcessResume {
+    [DllImport("ntdll.dll")] private static extern int NtResumeProcess(IntPtr handle);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenProcess(int access, bool inherit, int processId);
+    [DllImport("kernel32.dll")] private static extern bool CloseHandle(IntPtr handle);
+
+    // PROCESS_SUSPEND_RESUME | PROCESS_QUERY_INFORMATION
+    private const int Access = 0x0800 | 0x0400;
+
+    public static bool Resume(int processId) {
+        IntPtr handle = OpenProcess(Access, false, processId);
+        if (handle == IntPtr.Zero) return false;
+        try { return NtResumeProcess(handle) == 0; }
+        finally { CloseHandle(handle); }
+    }
+}
+'@
+    }
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $resumed = $false
+    while ((Get-Date) -lt $deadline) {
+        foreach ($item in @(Get-MainOfficialCodexProcess $AppDir)) {
+            $process = Get-Process -Id $item.ProcessId -ErrorAction SilentlyContinue
+            if (-not $process) { continue }
+
+            # A healthy renderer host has dozens of threads; a frozen one has a
+            # single thread parked in the Suspended wait state.
+            $threads = @($process.Threads)
+            $isFrozen = $threads.Count -le 2 -and
+                @($threads | Where-Object { "$($_.WaitReason)" -eq "Suspended" }).Count -gt 0
+            if (-not $isFrozen) { continue }
+
+            if ([RightlyProcessResume]::Resume($item.ProcessId)) {
+                Write-RightlyLog "Resumed suspended GPT PID $($item.ProcessId) (was $($threads.Count) thread(s))"
+                $resumed = $true
+                Start-Sleep -Milliseconds 800
+            } else {
+                Write-RightlyLog "Could not resume suspended GPT PID $($item.ProcessId)"
+            }
+        }
+        if ($resumed) { return $true }
+        Start-Sleep -Milliseconds 400
+    }
+    return $resumed
+}
+
 function Start-PackagedCodex {
     param([string] $AppUserModelId, [string] $Arguments)
     if (-not ("RightlyRuntimeActivation" -as [type])) {
@@ -343,6 +418,7 @@ public static class RightlyRuntimeActivation {
 }
 
 $injector = $null
+$official = $null
 try {
     New-Item -ItemType Directory -Path $Script:LogDir -Force | Out-Null
     Set-Content -LiteralPath $Script:LogPath `
@@ -370,6 +446,7 @@ try {
         $injector = Start-Injector $port
         $activationProcessId = Start-PackagedCodex -AppUserModelId $official.AppUserModelId -Arguments ""
         Write-RightlyLog "Requested a new window from background GPT PID $($runningMain.ProcessId); activation PID $activationProcessId; injector PID $($injector.Id)"
+        [void](Resume-SuspendedCodex -AppDir $official.AppDir)
         Set-RightlyStatus "injecting" "Applying Rightly to the new window and verifying its live renderer."
         Wait-InjectorVerification $injector
         Focus-OfficialCodex -MainProcess $runningMain -Official $official
@@ -387,12 +464,24 @@ try {
     Stop-OfficialCodex $official.AppDir
     Stop-StaleRightlyInjectors
     Set-RightlyStatus "opening" "Opening the official GPT application with a private loopback debugging endpoint."
+    New-Item -ItemType Directory -Path $Script:UserDataDir -Force | Out-Null
     $port = Get-FreeLoopbackPort
     $injector = Start-Injector $port
-    $arguments = "--remote-debugging-address=127.0.0.1 --remote-debugging-port=$port --force-ui-direction=ltr"
+    # --user-data-dir  : non-default profile so Chromium 136+ allows remote debugging
+    # --remote-allow-origins : Chromium 111+ requires this for the DevTools WebSocket
+    # The path is passed unquoted: ActivateApplication forwards this string verbatim,
+    # so quotes would end up as literal characters in an invalid profile path. The
+    # directory is deliberately kept free of spaces to make that safe.
+    $arguments = "--remote-debugging-address=127.0.0.1 --remote-debugging-port=$port " +
+        "--remote-allow-origins=* --force-ui-direction=ltr " +
+        "--user-data-dir=$Script:UserDataDir"
+    Write-RightlyLog "Requesting official GPT launch on port $port with profile '$Script:UserDataDir'"
     $launchedProcessId = Start-PackagedCodex `
         -AppUserModelId $official.AppUserModelId -Arguments $arguments
     Write-RightlyLog "Launched official GPT PID $launchedProcessId with loopback DevTools port $port; injector PID $($injector.Id)"
+    # Windows hands this app back suspended here; without the resume it never
+    # reaches the point of opening its DevTools port and injection times out.
+    [void](Resume-SuspendedCodex -AppDir $official.AppDir)
     Set-RightlyStatus "injecting" "Applying the RTL payload and verifying it inside the live GPT renderer."
     Wait-InjectorVerification $injector
     Write-RightlyLog "GPT startup completed with a verified Rightly payload"
@@ -402,7 +491,34 @@ try {
         Stop-Process -Id $injector.Id -Force -ErrorAction SilentlyContinue
     }
     Write-RightlyLog "FATAL $($_.Exception.Message)`r`n$($_.ScriptStackTrace)"
+
+    # A failed startup can leave the official app alive with no window. Because
+    # GPT is single-instance, that leftover process silently swallows every later
+    # launch, so the user cannot even open GPT normally. Clean it up unless it
+    # actually managed to show a window.
+    try {
+        if ($official) {
+            $leftovers = @(Get-OfficialCodexProcesses $official.AppDir)
+            $visible = @($leftovers | Where-Object {
+                $p = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue
+                $p -and $p.MainWindowHandle -ne [IntPtr]::Zero
+            })
+            if ($leftovers.Count -gt 0 -and $visible.Count -eq 0) {
+                foreach ($item in $leftovers) {
+                    Stop-Process -Id $item.ProcessId -Force -ErrorAction SilentlyContinue
+                }
+                Write-RightlyLog "Cleaned up $($leftovers.Count) windowless GPT process(es) so GPT can be opened normally"
+            }
+        }
+    } catch {
+        Write-RightlyLog "Could not clean up leftover GPT processes: $($_.Exception.Message)"
+    }
+
     Set-RightlyStatus "failed" $_.Exception.Message
-    if (-not $StatusFile) { Show-RightlyError $_.Exception.Message }
+    if (-not $StatusFile) {
+        Show-RightlyError ($_.Exception.Message +
+            "`r`n`r`nThe Hebrew/RTL correction could not be applied, but GPT itself is fine: " +
+            "open ChatGPT normally from the Start menu.")
+    }
     exit 1
 }
