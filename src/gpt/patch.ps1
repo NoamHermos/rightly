@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
 Installs the Rightly launcher for the official GPT Work / Codex application.
 
@@ -232,10 +232,11 @@ function Copy-RuntimeFile {
 }
 
 function Remove-ObsoleteRuntimeFiles {
-    # "Rightly GPT.exe" is deliberately absent: leaving it out makes an upgrade
-    # delete the unsigned launcher that Smart App Control used to block.
-    # "user-data" is the dedicated Chromium profile the launcher starts GPT with.
-    $allowedNames = @($Script:RuntimeFileNames) + @("Rightly GPT.ico", "state.json", "logs", "user-data")
+    # Two names are deliberately absent so an upgrade deletes them: "Rightly GPT.exe",
+    # the unsigned launcher Smart App Control blocked, and "user-data", the separate
+    # Chromium profile a previous release started GPT on. That profile split GPT into
+    # two instances, so it is now dead weight - typically a few hundred megabytes.
+    $allowedNames = @($Script:RuntimeFileNames) + @("Rightly GPT.ico", "state.json", "logs")
     foreach ($item in @(Get-ChildItem -LiteralPath $Script:RuntimeDir -Force -ErrorAction SilentlyContinue)) {
         if ($item.Name -notin $allowedNames) {
             Remove-Item -LiteralPath $item.FullName -Recurse -Force
