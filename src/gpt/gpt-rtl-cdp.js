@@ -24,6 +24,7 @@ const logPath = args.log;
 const resultPath = args.result;
 const injectionWindowMs = Number(args["injection-window-ms"] || 20000);
 const verifyOnly = args["verify-only"] === "true";
+const watch = args["watch"] === "true";
 
 if (!Number.isInteger(port) || port <= 0 || !payloadPath || !logPath || !resultPath ||
     !Number.isInteger(injectionWindowMs) || injectionWindowMs < 5000) {
@@ -66,6 +67,7 @@ process.on("unhandledRejection", (error) => {
 const payload = verifyOnly ? "" : fs.readFileSync(payloadPath, "utf8");
 const versionEndpoint = `http://127.0.0.1:${port}/json/version`;
 const targetsEndpoint = `http://127.0.0.1:${port}/json/list`;
+const versionEndpointForWatch = versionEndpoint;
 
 function delay(milliseconds) {
     return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -166,6 +168,9 @@ class PageConnection {
     }
 
     async inject() {
+        // Page must be enabled for addScriptToEvaluateOnNewDocument to register,
+        // and the registration only lives as long as this connection stays open.
+        await this.send("Page.enable").catch(() => {});
         await this.send("Page.addScriptToEvaluateOnNewDocument", { source: payload }).catch(() => {});
         const evaluation = await this.send("Runtime.evaluate", {
             expression: payload,
@@ -235,6 +240,87 @@ function isInjectableTarget(target) {
         ["page", "webview", "iframe"].includes(target.type);
 }
 
+// Targets created after the startup window - a window opened from a completion
+// toast, a second GPT window - would otherwise never receive the payload. The
+// watcher subscribes to the browser-level target stream instead of polling, so
+// it costs nothing while idle, and it ends when GPT closes its debugging socket.
+async function watchForNewTargets(live) {
+    const version = await getJson(versionEndpointForWatch);
+    if (!version.webSocketDebuggerUrl) {
+        throw new Error("The GPT browser endpoint exposed no WebSocket URL");
+    }
+
+    const socket = new WebSocket(version.webSocketDebuggerUrl);
+    await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("Browser WebSocket timed out")), 5000);
+        socket.addEventListener("open", () => { clearTimeout(timer); resolve(); }, { once: true });
+        socket.addEventListener("error", () => { clearTimeout(timer); reject(new Error("Browser WebSocket failed")); }, { once: true });
+    });
+
+    const pending = new Set();
+    async function injectTarget(targetId, type, url) {
+        if (live.has(targetId) || pending.has(targetId)) return;
+        pending.add(targetId);
+        try {
+            // A brand new target is not always ready to evaluate immediately.
+            for (let attempt = 0; attempt < 5; attempt++) {
+                await delay(400);
+                let connection;
+                try {
+                    const targets = await getJson(targetsEndpoint);
+                    const target = targets.find((item) => item.id === targetId);
+                    if (!target || !target.webSocketDebuggerUrl) continue;
+                    connection = await PageConnection.connect(target);
+                    await connection.inject();
+                    // Hold the connection: the on-new-document registration is
+                    // dropped the moment this client detaches, and the window
+                    // would lose the correction on its next navigation.
+                    live.set(targetId, connection);
+                    log(`Corrected a ${type} opened after startup: ${url || ""}`);
+                    return;
+                } catch (error) {
+                    if (connection) connection.close();
+                    if (attempt === 4) {
+                        log(`Could not correct the new ${type} ${url || ""}: ${error.message}`);
+                    }
+                }
+            }
+        } finally {
+            pending.delete(targetId);
+        }
+    }
+
+    socket.addEventListener("message", (event) => {
+        let message;
+        try { message = JSON.parse(String(event.data)); } catch { return; }
+        if (message.method === "Target.targetDestroyed") {
+            const gone = message.params && message.params.targetId;
+            const connection = live.get(gone);
+            if (connection) {
+                connection.close();
+                live.delete(gone);
+            }
+            return;
+        }
+        if (message.method !== "Target.targetCreated" &&
+            message.method !== "Target.targetInfoChanged") return;
+        const info = message.params && message.params.targetInfo;
+        if (!info || !["page", "webview", "iframe"].includes(info.type)) return;
+        if (message.method === "Target.targetInfoChanged" && live.has(info.targetId)) return;
+        injectTarget(info.targetId, info.type, info.url).catch(() => {});
+    });
+
+    socket.send(JSON.stringify({ id: 1, method: "Target.setDiscoverTargets", params: { discover: true } }));
+    log("Watching for GPT windows opened after startup");
+
+    // Stay alive until GPT closes, then let the process exit on its own.
+    await new Promise((resolve) => {
+        socket.addEventListener("close", resolve, { once: true });
+        socket.addEventListener("error", resolve, { once: true });
+    });
+    log("GPT closed its debugging socket; the Rightly watcher is exiting");
+}
+
 async function main() {
     log(`Waiting for official GPT DevTools endpoint on 127.0.0.1:${port}`);
     await waitForDebugger();
@@ -280,12 +366,19 @@ async function main() {
         await delay(400);
     }
 
-    connections.forEach((connection) => connection.close());
+    if (!watch || injectionCount === 0) {
+        connections.forEach((connection) => connection.close());
+    }
     if (injectionCount === 0) {
         throw new Error("No GPT renderer accepted the Rightly payload" + (lastError ? ": " + lastError.message : ""));
     }
-    log(`Startup injection window completed after ${injectionWindowMs}ms; verified ${injectionCount} renderer target(s) and disconnected DevTools`);
-    await delay(50);
+    log(`Startup injection window completed after ${injectionWindowMs}ms; verified ${injectionCount} renderer target(s)`);
+    if (!watch) {
+        log("Disconnected DevTools");
+        await delay(50);
+        return;
+    }
+    await watchForNewTargets(connections);
 }
 
 (verifyOnly ? verifyRunningInstance() : main()).catch((error) => {

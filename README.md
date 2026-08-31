@@ -74,6 +74,7 @@ Its behavior depends on GPT's current state:
 | Open without a verified correction | Closes that uncorrected process tree once and reopens the official app through Rightly |
 | Launcher clicked twice | A Windows single-instance lock keeps the first launch active; the second click reports that GPT is already starting |
 | Windows started GPT suspended | Resumes the frozen process so it can finish starting and open its debugging endpoint |
+| A window opens after startup | The watcher corrects the new renderer as soon as it appears |
 
 On failure, the controller displays a clear message and a path to the diagnostic log.
 
@@ -115,7 +116,10 @@ The GPT integration never writes to the Microsoft Store installation:
 4. A short-lived Node.js injector connects only to page-specific local WebSockets.
 5. It evaluates the Rightly renderer payload and checks `globalThis.__RT_AI_CODEX_RTL_PATCH__` in the live renderer.
 6. Startup succeeds only after the marker returns `true`.
-7. The injector disconnects after its bounded startup window. No persistent Node process remains.
+7. After the bounded startup window the injector stops injecting and switches to
+   watching. It subscribes to GPT's browser-level target stream, so a window opened
+   later - from a completion toast, for example - is corrected as soon as it appears.
+   The watcher is event-driven rather than polling, and it exits when GPT closes.
 
 If GPT is already running, the launcher first checks its command line and live marker. A verified process is preserved. An unverified process is restarted once because Chromium debugging flags cannot be added to an existing Electron process.
 
@@ -135,7 +139,9 @@ However, a major GPT update can change renderer structure or security behavior. 
 
 Claude updates can replace the resources modified by its in-place integration, so Claude must also be repaired after an official update.
 
-No scheduled task, watcher, persistent Node process, or automatic repair service is installed. Repair is intentionally user-triggered.
+No scheduled task or automatic repair service is installed, and nothing runs while GPT
+is closed. Repair is intentionally user-triggered. The only background process is the
+injector that watches the GPT session it started, and it exits with GPT.
 
 ## Installed files
 
@@ -169,7 +175,10 @@ Choose GPT, Claude, or both.
 
 ## Privacy and security
 
-Rightly does not send conversation content to a Rightly server. The GPT debugging endpoint accepts loopback connections only, and the injector disconnects after live verification.
+Rightly does not send conversation content to a Rightly server. The GPT debugging
+endpoint accepts loopback connections only. The injector keeps that loopback
+connection for as long as GPT is open, so windows opened later are corrected too, and
+it exits with GPT.
 
 ## No custom executable
 

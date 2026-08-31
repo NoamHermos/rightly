@@ -128,6 +128,9 @@ Assert-True ($runtimeLauncher.Contains('Test-RunningRightlyHost')) "Tray-only co
 Assert-True ($runtimeLauncher.Contains('Start-Injector $port')) "New GPT renderers are not injected"
 Assert-True ($runtimeInjector.Contains('verifyRunningInstance')) "GPT injector lacks verify-only mode"
 Assert-True ($runtimeInjector.Contains('hasRightlyMarker')) "GPT injector does not verify the marker"
+Assert-True ($runtimeInjector.Contains('Target.setDiscoverTargets')) "GPT windows opened after startup are not corrected"
+Assert-True ($runtimeInjector.Contains('Page.enable')) "The payload is not re-applied after a navigation"
+Assert-True (-not $runtimeLauncher.Contains('--user-data-dir=')) "A second profile would split GPT into two instances"
 
 # Direction rules remain application-specific and performance-bounded.
 Assert-True ($payload.Contains('hasHebrew')) "Hebrew-anywhere detection is missing"

@@ -70,9 +70,12 @@ Assert-True ($runtimeLauncher.Contains('SW_RESTORE = 9')) "A minimized GPT windo
 Assert-True ($runtimeLauncher.Contains('SetForegroundWindow')) "A corrected GPT window is not focused"
 Assert-True ($injector.Contains('verifyRunningInstance')) "The injector has no marker-only verification mode"
 Assert-True ($injector.Contains('hasRightlyMarker')) "The injector does not inspect the renderer marker"
+Assert-True ($injector.Contains('Target.setDiscoverTargets')) "The injector does not watch for windows opened after startup"
+Assert-True ($injector.Contains('Page.enable')) "The correction is not re-applied after a navigation"
+Assert-True ($injector.Contains('live.set(targetId, connection)')) "The injector drops the connection that keeps a window corrected"
 
-# The shortcut uses Microsoft's signed PowerShell host; the native EXE remains
-# buildable for a future trusted-signing release.
+# Everything starts through Microsoft's signed PowerShell host. The unsigned native
+# launcher was removed because Smart App Control blocked it.
 Assert-True (-not $patcher.Contains('New-RightlyGptLauncher')) "The removed native launcher is still built during installation"
 Assert-True ($patcher.Contains('$Script:RuntimeUi')) "Shortcuts do not start the status window"
 Assert-True ($patcher.Contains('New-RightlyGptShortcuts')) "Managed GPT shortcuts are not created"
@@ -86,6 +89,8 @@ Assert-True ($statusWindow.Contains('System.Windows.Forms.ProgressBar')) "The la
 Assert-True ($statusWindow.Contains('$timer.Add_Tick')) "The launcher polls progress on its GUI thread"
 Assert-True ($opener.Contains('NtResumeProcess')) "The opener cannot resume a suspended GPT app"
 Assert-True ($runtimeLauncher.Contains('Resume-SuspendedCodex')) "The launcher does not resume a suspended GPT process"
+Assert-True (-not $runtimeLauncher.Contains('--user-data-dir=')) "A second profile splits GPT in two, so notification clicks open an uncorrected window"
+Assert-True ($runtimeLauncher.Contains('--watch true')) "The injector is not asked to watch for windows opened after startup"
 
 # GPT-only installation remains unelevated; Claude keeps its administrator flow.
 Assert-True ($installerModule.Contains('if ($Target -eq "GptWork") { return $false }')) "GPT-only installation still requests elevation"

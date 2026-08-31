@@ -1,4 +1,4 @@
-<#
+﻿<#
 Launches the official GPT Work / Codex package with a loopback-only Chromium
 debugging endpoint, then starts the lightweight Rightly runtime injector.
 #>
@@ -13,13 +13,6 @@ $Script:InjectorPath = Join-Path $Script:Root "gpt-rtl-cdp.js"
 $Script:LogDir = Join-Path $Script:Root "logs"
 $Script:LogPath = Join-Path $Script:LogDir "gpt-runtime.log"
 $Script:ResultPath = Join-Path $Script:LogDir "gpt-startup-result.json"
-
-# Chromium 136+ (this app now ships a Chrome 151 "owl" runtime) refuses to open
-# the DevTools remote-debugging port when the app runs on its DEFAULT profile
-# directory. A dedicated, non-default --user-data-dir re-enables it. This profile
-# persists between launches, so the one-time ChatGPT sign-in sticks and the chat
-# history (which lives server-side) returns immediately after logging in.
-$Script:UserDataDir = Join-Path $Script:Root "user-data"
 
 function Write-RightlyLog {
     param([string] $Message)
@@ -153,6 +146,10 @@ function Start-Injector {
         "--injection-window-ms", $(if ($VerifyOnly) { "5000" } else { "20000" })
     ) -join " "
     if ($VerifyOnly) { $arguments += " --verify-only true" }
+    # Windows created after startup - one opened from a completion toast, for
+    # example - are new DevTools targets. Keep watching for them, event-driven, so
+    # they are corrected too. The watcher exits when GPT closes.
+    else { $arguments += " --watch true" }
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = $node.Source
     $startInfo.Arguments = $arguments
@@ -464,18 +461,19 @@ try {
     Stop-OfficialCodex $official.AppDir
     Stop-StaleRightlyInjectors
     Set-RightlyStatus "opening" "Opening the official GPT application with a private loopback debugging endpoint."
-    New-Item -ItemType Directory -Path $Script:UserDataDir -Force | Out-Null
     $port = Get-FreeLoopbackPort
     $injector = Start-Injector $port
-    # --user-data-dir  : non-default profile so Chromium 136+ allows remote debugging
+    # GPT must keep its own profile. Passing --user-data-dir moves it onto a second
+    # profile, and Chromium's single-instance lock lives in that directory, so a
+    # notification click - which activates the app without our flags - opened a
+    # separate, uncorrected instance instead of reusing the corrected window.
+    # Remote debugging works on the app's own profile: its owl runtime already
+    # sets a non-default user data directory, so the Chromium 136+ restriction
+    # never applied here.
     # --remote-allow-origins : Chromium 111+ requires this for the DevTools WebSocket
-    # The path is passed unquoted: ActivateApplication forwards this string verbatim,
-    # so quotes would end up as literal characters in an invalid profile path. The
-    # directory is deliberately kept free of spaces to make that safe.
     $arguments = "--remote-debugging-address=127.0.0.1 --remote-debugging-port=$port " +
-        "--remote-allow-origins=* --force-ui-direction=ltr " +
-        "--user-data-dir=$Script:UserDataDir"
-    Write-RightlyLog "Requesting official GPT launch on port $port with profile '$Script:UserDataDir'"
+        "--remote-allow-origins=* --force-ui-direction=ltr"
+    Write-RightlyLog "Requesting official GPT launch on port $port"
     $launchedProcessId = Start-PackagedCodex `
         -AppUserModelId $official.AppUserModelId -Arguments $arguments
     Write-RightlyLog "Launched official GPT PID $launchedProcessId with loopback DevTools port $port; injector PID $($injector.Id)"
