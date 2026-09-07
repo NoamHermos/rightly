@@ -103,7 +103,7 @@ function Invoke-RightlyElevatedInstallerIfNeeded {
     if ($RepairMode) { $arguments += " -RepairMode" }
 
     $process = Start-Process -FilePath (Get-RightlyPowerShellPath) `
-        -ArgumentList $arguments -Verb RunAs -Wait -PassThru
+        -ArgumentList $arguments -Verb RunAs -WindowStyle Hidden -Wait -PassThru
     if ($process.ExitCode -ne 0) {
         throw "The elevated installer exited with code $($process.ExitCode)."
     }
@@ -183,7 +183,8 @@ function Install-RightlyRepairBundle {
         "src\gpt\open-chatgpt.ps1",
         "src\gpt\lib\Rightly.GptLauncher.ps1",
         "src\claude\patch.ps1",
-        "src\claude\claude-rtl-payload.js"
+        "src\claude\claude-rtl-payload.js",
+        "src\claude\verify-asar.js"
     )) {
         Copy-RightlyRepairFile $relative
     }

@@ -72,6 +72,9 @@ Assert-True ($readme.Contains('Repair RTL')) "Claude README must describe the in
 
 & node (Join-Path $PSScriptRoot "claude-direction.test.js")
 Assert-True ($LASTEXITCODE -eq 0) "Claude direction behavior tests failed"
+& node (Join-Path $PSScriptRoot "claude-asar.test.js")
+Assert-True ($LASTEXITCODE -eq 0) "Claude ASAR verification tests failed"
+& (Join-Path $PSScriptRoot "claude-repair.test.ps1")
 
 if (-not $SkipInstalledBuild) {
     $package = Get-AppxPackage -Name "Claude" -ErrorAction SilentlyContinue |

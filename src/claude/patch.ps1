@@ -81,7 +81,7 @@ function Invoke-ElevatedIfNeeded {
     $powershell = Join-Path $env:WINDIR "System32\WindowsPowerShell\v1.0\powershell.exe"
     $arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -$Action -Elevated"
     if ($NoLaunch) { $arguments += " -NoLaunch" }
-    $process = Start-Process -FilePath $powershell -ArgumentList $arguments -Verb RunAs -Wait -PassThru
+    $process = Start-Process -FilePath $powershell -ArgumentList $arguments -Verb RunAs -WindowStyle Hidden -Wait -PassThru
     if ($process.ExitCode -ne 0) {
         throw "The elevated Claude $Action process exited with code $($process.ExitCode)."
     }
@@ -249,7 +249,9 @@ function Get-TransformedUpstreamScript {
     } else {
         "# Non-interactive RT-AI restore`r`nRestore-Patch`r`nUninstall-AutoUpdateTask`r`n"
     }
-    return $transformed.Substring(0, $menuMarker) + $tail
+    $transformed = $transformed.Substring(0, $menuMarker) + $tail
+    return $transformed.Replace('PATCH INSTALLATION COMPLETED SUCCESSFULLY! ENJOY!',
+        'Engine finished; verifying the CURRENT Claude package...')
 }
 
 function Invoke-InPlaceAction {
@@ -293,7 +295,7 @@ function Remove-Shortcuts {
     }
 }
 
-function Start-OfficialClaude {
+function Invoke-ClaudeActivation {
     $official = Get-OfficialClaudePackage
     if (@(Get-ClaudeProcesses @($official.AppDir)).Count -gt 0) {
         Write-Info "Official Claude is already running."
@@ -328,7 +330,106 @@ public static class RtAiClaudeActivation {
     }
 
     [void] [RtAiClaudeActivation]::Start($official.AppUserModelId, "--force-ui-direction=ltr")
-    Write-Ok "Launched the official Claude app."
+    Write-Info "Activated the official Claude app; checking the running package."
+}
+
+function Get-ClaudePatchVerification {
+    # state.json alone can refer to a package which Windows has just replaced.
+    try {
+        $official = Get-OfficialClaudePackage
+        $state = Get-Content -LiteralPath (Join-Path $Script:StateDir "state.json") -Raw | ConvertFrom-Json
+        if ([string]$state.patchedVersion -ne [string]$official.Package.Version -or
+            $state.patchedInstallPath -ne $official.Package.InstallLocation) {
+            throw "Patch state belongs to another Claude package."
+        }
+        $verifier = Join-Path $Script:ModuleRoot "verify-asar.js"
+        $asar = Join-Path $official.AppDir "resources\app.asar"
+        $resultText = & node.exe $verifier $asar $Script:PayloadPath
+        $exitCode = $LASTEXITCODE
+        $result = $resultText | ConvertFrom-Json
+        if ($exitCode -ne 0 -or -not $result.verified) { throw "ASAR verification failed: $($result.reason)" }
+        $current = Get-OfficialClaudePackage
+        if ($current.AppDir -ne $official.AppDir) { throw "Claude changed packages during verification." }
+        return [pscustomobject]@{ Verified = $true; Official = $current; Reason = "" }
+    } catch {
+        return [pscustomobject]@{ Verified = $false; Official = $null; Reason = $_.Exception.Message }
+    }
+}
+
+function Wait-ClaudePatchVerified {
+    param([string] $ExpectedAppDir, [switch] $RequireRunning)
+
+    # Observe several times after closure/activation: MSIX registration is asynchronous.
+    $stableSamples = 0
+    for ($sample = 0; $sample -lt 10; $sample++) {
+        Start-Sleep -Seconds 2
+        $check = Get-ClaudePatchVerification
+        if (-not $check.Verified) { return $false }
+        if ($check.Official.AppDir -ne $ExpectedAppDir) { return $false }
+        if ($RequireRunning -and @(
+            Get-ClaudeProcesses @($ExpectedAppDir) | Where-Object { $_.CommandLine -notmatch '--type=' }
+        ).Count -eq 0) {
+            $stableSamples = 0
+            continue
+        }
+        $stableSamples++
+        if ($stableSamples -ge 3) { return $true }
+    }
+    return $false
+}
+
+function Install-VerifiedClaudePatch {
+    # Always discover again after closing Claude; a staged Store update can finish here.
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        Stop-ClaudeProcesses
+        Start-Sleep -Seconds 2
+        $before = Get-OfficialClaudePackage
+        Write-Step "Patching Claude $($before.Package.Version) (attempt $attempt of 3)"
+        try {
+            Invoke-InPlaceAction "Install"
+        } catch {
+            # Retry a disappeared/replaced package, but don't conceal genuine engine errors.
+            $after = Get-OfficialClaudePackage
+            if ($after.AppDir -eq $before.AppDir) { throw }
+            Write-Warn "Claude updated during patching; retrying the newly registered package."
+            continue
+        }
+        Remove-AutomaticPatching
+        Stop-ClaudeProcesses
+        if (Wait-ClaudePatchVerified -ExpectedAppDir $before.AppDir) {
+            Write-Ok "Verified the current Rightly payload in Claude $($before.Package.Version)."
+            return
+        }
+        Write-Warn "Claude changed or its active resources failed verification; retrying."
+    }
+    throw "Claude RTL repair could not be verified after three attempts. No repair success is being reported."
+}
+
+function Invoke-ClaudeRepairForLaunch {
+    # Run -NoLaunch in a child so the final unelevated launch can repair an update
+    # that landed AFTER the elevated installer exited, without recursive launch loops.
+    $powershell = Join-Path $env:WINDIR "System32\WindowsPowerShell\v1.0\powershell.exe"
+    & $powershell -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath -Install -NoLaunch
+    if ($LASTEXITCODE -ne 0) { throw "Claude repair before launch failed ($LASTEXITCODE)." }
+}
+
+function Start-OfficialClaude {
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        $check = Get-ClaudePatchVerification
+        if (-not $check.Verified) {
+            Write-Warn "The active Claude package needs repair: $($check.Reason)"
+            Invoke-ClaudeRepairForLaunch
+            $check = Get-ClaudePatchVerification
+            if (-not $check.Verified) { throw "Claude is still unverified after repair: $($check.Reason)" }
+        }
+        Invoke-ClaudeActivation
+        if (Wait-ClaudePatchVerified -ExpectedAppDir $check.Official.AppDir -RequireRunning) {
+            Write-Ok "Launched and verified patched Claude $($check.Official.Package.Version)."
+            return
+        }
+        Write-Warn "Claude changed or did not start as expected; rechecking before success."
+    }
+    throw "Could not verify the running Claude package after three launch attempts."
 }
 
 function Remove-LegacyCopy {
@@ -345,16 +446,14 @@ function Install-ClaudePatch {
     Write-Step "Disabling every legacy automatic Claude RTL patch"
     Remove-AutomaticPatching
 
-    Invoke-InPlaceAction "Install"
-    Remove-AutomaticPatching
+    Install-VerifiedClaudePatch
 
     Write-Step "Removing the obsolete copied Claude installation"
     Remove-LegacyCopy
     Remove-Shortcuts
     Remove-DirectoryIfAllowed $Script:LauncherDir
 
-    if ($NoLaunch) { Stop-ClaudeProcesses }
-    else { Start-OfficialClaude }
+    if (-not $NoLaunch) { Start-OfficialClaude }
 
     Write-Host ""
     Write-Ok "The official Claude app is patched in place. The unified installer manages the repair shortcut."
@@ -378,8 +477,9 @@ function Show-ClaudePatchStatus {
     Write-Host "Rightly for Claude - Status" -ForegroundColor Cyan
     Write-Info "Official package: $($official.Package.Version)"
     Write-Info "Official executable: $($official.Exe)"
-    if (Test-Path -LiteralPath $statePath) { Write-Ok "In-place patch state: $statePath" }
-    else { Write-Warn "In-place patch state was not found." }
+    $check = Get-ClaudePatchVerification
+    if ($check.Verified) { Write-Ok "Current package and Rightly payload verified: $statePath" }
+    else { Write-Warn "The active Claude package is NOT verified: $($check.Reason)" }
     if (Test-Path -LiteralPath $Script:LegacyCopyDir) { Write-Warn "Obsolete Claude copy still exists: $($Script:LegacyCopyDir)" }
     else { Write-Ok "No copied Claude installation exists." }
     if (@(Get-AutomaticTasks).Count -gt 0) { Write-Warn "An automatic Claude RTL task is still installed." }

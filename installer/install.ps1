@@ -57,11 +57,6 @@ if ($Target -in @("ClaudeCode", "Both")) {
 Install-RightlyRepairBundle
 New-RightlyRepairShortcut
 
-Write-Host ""
-$completion = if ($RepairMode) { "RTL repair" } else { "Installation" }
-Write-Host "$completion completed successfully." -ForegroundColor Green
-Write-Host "Use the Repair RTL desktop shortcut after an official app update." -ForegroundColor Green
-
 if (-not $NoLaunch) {
     # GPT opens last because it can move the active conversation to the new window.
     if ($Target -in @("ClaudeCode", "Both")) {
@@ -71,3 +66,8 @@ if (-not $NoLaunch) {
         Invoke-RightlyOfficialLauncher -Name "GPT Work / Codex" -Path $gptPatcher
     }
 }
+
+Write-Host ""
+$completion = if ($RepairMode) { "RTL repair" } else { "Installation" }
+Write-Host "$completion completed successfully." -ForegroundColor Green
+Write-Host "Use the Repair RTL desktop shortcut after an official app update." -ForegroundColor Green

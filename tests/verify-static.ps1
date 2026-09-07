@@ -37,6 +37,7 @@ $required = @(
     "src\gpt\lib\Rightly.GptLauncher.ps1",
     "src\claude\patch.ps1",
     "src\claude\claude-rtl-payload.js",
+    "src\claude\verify-asar.js",
     "tests\verify-package.ps1"
 )
 foreach ($relative in $required) {

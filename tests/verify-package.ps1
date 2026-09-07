@@ -43,7 +43,8 @@ try {
         "src\gpt\open-chatgpt.ps1",
         "src\gpt\lib\Rightly.GptLauncher.ps1",
         "src\claude\patch.ps1",
-        "src\claude\claude-rtl-payload.js"
+        "src\claude\claude-rtl-payload.js",
+        "src\claude\verify-asar.js"
     )
     foreach ($relative in $expected) {
         Assert-True (Test-Path -LiteralPath (Join-Path $repairRoot $relative) -PathType Leaf) `

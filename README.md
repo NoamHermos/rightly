@@ -137,7 +137,7 @@ An official GPT update installs a new versioned Store directory. It does not ove
 
 However, a major GPT update can change renderer structure or security behavior. Run **Repair RTL** after an update so the launcher, injector, and payload are refreshed from the latest Rightly revision. The launcher's live marker verification prevents a silent success when the updated renderer is no longer compatible.
 
-Claude updates can replace the resources modified by its in-place integration, so Claude must also be repaired after an official update.
+Claude updates can replace the resources modified by its in-place integration, so Claude must also be repaired after an official update. Repair checks the registered package and the actual renderer/main-process payload after closing Claude and again after launch. If a pending Store update replaces the package during repair, it retries the current version (up to three attempts) instead of reporting success for the obsolete version. Failed verification is reported as a failure, not a successful repair. These checks run only during user-triggered repair/launch; there is no background updater.
 
 No scheduled task or automatic repair service is installed, and nothing runs while GPT
 is closed. Repair is intentionally user-triggered. The only background process is the
