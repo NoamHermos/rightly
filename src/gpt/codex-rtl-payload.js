@@ -24,6 +24,11 @@
     var APP_CHROME_SEL = "nav, aside, [role=\"navigation\"], [role=\"menu\"], [role=\"menubar\"], [role=\"toolbar\"]";
     var APP_SHELL_LTR_ATTR = "data-rt-ai-app-shell-ltr";
     var SIDEBAR_TITLE_SEL = "aside [data-thread-title=\"true\"]";
+    // Codex renders its interactive question panels - the ones with a reply box
+    // and Skip/Send - from generic div/span elements rather than prose tags, so
+    // the ordinary TEXT_SEL pass never reaches their text.
+    var QUESTION_ROOT_SEL = "[role=\"dialog\"], [aria-modal=\"true\"], [role=\"radiogroup\"]";
+    var QUESTION_TEXT_SEL = "div, span, label, p, h1, h2, h3, h4, h5, h6";
     var SIDEBAR_MARK_ATTR = "data-rt-ai-sidebar-rtl";
     var MANAGED_DIR_ATTR = "data-rt-ai-dir";
     var TABLE_WRAPPER_ATTR = "data-rt-ai-table-wrapper";
@@ -432,6 +437,70 @@
         } else restoreManagedDirection(el);
     }
 
+    // Text owned directly by this element, ignoring text inside child elements.
+    function directText(el) {
+        var out = "";
+        var nodes = (el && el.childNodes) || [];
+        for (var i = 0; i < nodes.length; i++) {
+            if (nodes[i].nodeType === 3) out += nodes[i].textContent || "";
+        }
+        return out;
+    }
+
+    // Interactive question panels --------------------------------------------
+    // Identify the interactive cluster, then direction only its text-bearing
+    // descendants. The panel frame, buttons and flex ordering stay LTR so the
+    // controls do not move.
+    function isQuestionCluster(el) {
+        if (!el || !el.querySelectorAll || !hasRTL(el.textContent || "")) return false;
+        var textLength = (el.textContent || "").length;
+        var controlCount = el.querySelectorAll("button, [role=\"radio\"]").length;
+        return controlCount >= 3 && controlCount <= 10 && textLength <= 5000;
+    }
+
+    function findQuestionCluster(el) {
+        var item = el;
+        for (var depth = 0; item && depth < 7; depth++, item = item.parentElement) {
+            if (item.matches && item.matches(QUESTION_ROOT_SEL) && hasRTL(item.textContent || "")) {
+                return item;
+            }
+            if (isQuestionCluster(item)) return item;
+            if (item === document.body || isInsideAppChrome(item)) break;
+        }
+        return null;
+    }
+
+    function processQuestionText(root) {
+        qsaWithClosest(root, QUESTION_TEXT_SEL).forEach(function (el) {
+            if (el === root || isInsideInput(el) || isInsideCode(el) || isInsideAppChrome(el)) return;
+            if (el.matches && el.matches("button, [role=\"radio\"]")) return;
+
+            // Prefer the smallest block that owns actual text. This avoids
+            // changing direction on outer flex containers and moving controls.
+            var ownText = directText(el);
+            var hasElementChildren = !!(el.children && el.children.length);
+            var control = el.closest && el.closest("button, [role=\"radio\"]");
+            var isControlTextWrapper = control && el !== control &&
+                !el.querySelector("button, [role=\"radio\"]") && hasRTL(el.textContent || "");
+            if (!hasRTL(ownText) && hasElementChildren && !isControlTextWrapper) return;
+            applyBlockDir(el, detectTextDir(ownText || el.textContent || ""));
+        });
+    }
+
+    function processInteractiveQuestions(root) {
+        var roots = [];
+        qsaWithClosest(root, QUESTION_ROOT_SEL).forEach(function (candidate) {
+            if (hasRTL(candidate.textContent || "")) roots.push(candidate);
+        });
+
+        qsaWithClosest(root, "input, textarea, [contenteditable=\"true\"]").forEach(function (input) {
+            var cluster = findQuestionCluster(input);
+            if (cluster && roots.indexOf(cluster) === -1) roots.push(cluster);
+        });
+
+        roots.forEach(processQuestionText);
+    }
+
     function processText(root) {
         qsaWithClosest(root, TEXT_SEL).forEach(function (el) {
             if (isInsideInput(el) || isInsideCode(el) || isInsideAppChrome(el)) return;
@@ -526,6 +595,7 @@
         processSidebarTitles(base);
         processTables(base);
         processText(base);
+        processInteractiveQuestions(base);
         processInputs(base);
         processCodeBlocks(base);
     }

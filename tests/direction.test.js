@@ -17,7 +17,9 @@ payload = payload.replace(
     "    window.__RT_AI_TEST_CODE_LINE_DIRECTIONS__ = codeLineDirections;\n" +
     "    window.__RT_AI_TEST_FIND_CODE_LINES__ = findExistingCodeLineElements;\n" +
     "    window.__RT_AI_TEST_ENFORCE_APP_SHELL_LTR__ = enforceAppShellLtr;\n" +
-    "    window.__RT_AI_TEST_PROCESS_SIDEBAR_TITLE__ = processSidebarTitleElement;\n\n" + hookPoint
+    "    window.__RT_AI_TEST_PROCESS_SIDEBAR_TITLE__ = processSidebarTitleElement;\n" +
+    "    window.__RT_AI_TEST_DIRECT_TEXT__ = directText;\n" +
+    "    window.__RT_AI_TEST_IS_QUESTION_CLUSTER__ = isQuestionCluster;\n\n" + hookPoint
 );
 
 const context = {
@@ -35,6 +37,8 @@ const codeLineDirections = context.window.__RT_AI_TEST_CODE_LINE_DIRECTIONS__;
 const findCodeLines = context.window.__RT_AI_TEST_FIND_CODE_LINES__;
 const enforceAppShellLtr = context.window.__RT_AI_TEST_ENFORCE_APP_SHELL_LTR__;
 const processSidebarTitle = context.window.__RT_AI_TEST_PROCESS_SIDEBAR_TITLE__;
+const directText = context.window.__RT_AI_TEST_DIRECT_TEXT__;
+const isQuestionCluster = context.window.__RT_AI_TEST_IS_QUESTION_CLUSTER__;
 
 assert.equal(detectTextDir("Hello שלום"), "rtl");
 assert.equal(detectTextDir("translate שלום please"), "rtl");
@@ -159,3 +163,70 @@ assert.equal(table.getAttribute("data-rt-ai-dir"), "rtl");
 assert.equal(table.style.textAlign, "right");
 
 console.log("RTL direction tests passed.");
+
+// Interactive question panels. Codex builds these from plain div/span elements,
+// so the prose pass never reaches them; they are matched as a control cluster
+// instead. Mirrors a panel with a reply box and Skip/Send buttons.
+function makeQuestionNode(tagName, options) {
+    const config = options || {};
+    const attributes = new Map();
+    const node = {
+        nodeType: 1,
+        tagName,
+        style: {},
+        hasAttribute: function (name) { return attributes.has(name); },
+        getAttribute: function (name) { return attributes.has(name) ? attributes.get(name) : null; },
+        setAttribute: function (name, value) { attributes.set(name, String(value)); },
+        removeAttribute: function (name) { attributes.delete(name); },
+        textContent: config.textContent || "",
+        childNodes: config.childNodes || [],
+        children: (config.childNodes || []).filter((child) => child.nodeType === 1),
+        matches: function (selector) {
+            return (config.roles || []).some((role) => selector.indexOf(role) !== -1);
+        },
+        querySelectorAll: function (selector) {
+            const matches = [];
+            (function visit(current) {
+                (current.childNodes || []).forEach((child) => {
+                    if (child.nodeType !== 1) return;
+                    if (child.matches(selector)) matches.push(child);
+                    visit(child);
+                });
+            })(node);
+            return matches;
+        }
+    };
+    return node;
+}
+
+const questionButtons = ["Skip", "Send", "Close"].map((label) =>
+    makeQuestionNode("BUTTON", { textContent: label, roles: ["button"] }));
+const questionBody = makeQuestionNode("DIV", {
+    childNodes: [
+        { nodeType: 3, nodeValue: "נפרד: קריאת פרטי חשבון",
+          textContent: "נפרד: קריאת פרטי חשבון" },
+        makeQuestionNode("SPAN", { textContent: "Cloudflare" })
+    ]
+});
+questionBody.textContent = directTextSeed();
+function directTextSeed() {
+    return "נפרד: קריאת פרטי חשבון Cloudflare";
+}
+const questionPanel = makeQuestionNode("DIV", {
+    textContent: questionBody.textContent + " Skip Send Close",
+    childNodes: [questionBody].concat(questionButtons)
+});
+
+assert.equal(isQuestionCluster(questionPanel), true, "a Hebrew panel with reply controls is a question cluster");
+assert.equal(
+    isQuestionCluster(makeQuestionNode("DIV", { textContent: "Skip Send Close", childNodes: questionButtons })),
+    false,
+    "an English-only panel must not be redirected"
+);
+
+// Only the element that directly owns the Hebrew text is redirected, so the
+// buttons keep their original order.
+assert.equal(directText(questionPanel), "");
+applyBlockDir(questionBody, detectTextDir(directText(questionBody)));
+assert.equal(questionBody.dir, "rtl");
+assert.equal(questionBody.style.textAlign, "right");
