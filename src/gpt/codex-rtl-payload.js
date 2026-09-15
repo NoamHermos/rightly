@@ -29,6 +29,11 @@
     // the ordinary TEXT_SEL pass never reaches their text.
     var QUESTION_ROOT_SEL = "[role=\"dialog\"], [aria-modal=\"true\"], [role=\"radiogroup\"]";
     var QUESTION_TEXT_SEL = "div, span, label, p, h1, h2, h3, h4, h5, h6";
+    // Codex opens Markdown files in a CodeMirror editor, which matches CODE_SEL,
+    // so the prose pass skips it. That is right for code but wrong for a Hebrew
+    // document, and CodeMirror marks the difference itself.
+    var MARKDOWN_DOC_SEL = ".cm-content[data-language=\"markdown\"]";
+    var MARKDOWN_LINE_SEL = ".cm-line";
     var SIDEBAR_MARK_ATTR = "data-rt-ai-sidebar-rtl";
     var MANAGED_DIR_ATTR = "data-rt-ai-dir";
     var TABLE_WRAPPER_ATTR = "data-rt-ai-table-wrapper";
@@ -36,7 +41,8 @@
     var CODE_LINE_ATTR = "data-rt-ai-code-line";
     var CODE_LINE_CONTAINER_ATTR = "data-rt-ai-code-line-container";
     var CODE_NEWLINE_ATTR = "data-rt-ai-code-newline";
-    var BLOCK_SEL = "table, ul, ol, " + TEXT_SEL + ", " + INPUT_SEL + ", " + CODE_BLOCK_SEL;
+    var BLOCK_SEL = "table, ul, ol, " + TEXT_SEL + ", " + INPUT_SEL + ", " +
+        CODE_BLOCK_SEL + ", " + MARKDOWN_DOC_SEL;
     var MAX_MUTATION_NODES = 200;
     var PROCESS_BATCH_SIZE = 3;
     var originalDirectionStates = new WeakMap();
@@ -501,6 +507,20 @@
         roots.forEach(processQuestionText);
     }
 
+    // Markdown documents ------------------------------------------------------
+    // Direction each line on its own, the same rule chat code blocks already
+    // follow: a line holding a Hebrew letter reads RTL, every other line stays
+    // LTR. Tables, list markers and headings keep the structure CodeMirror drew.
+    function processMarkdownDocuments(root) {
+        qsaWithClosest(root, MARKDOWN_DOC_SEL).forEach(function (content) {
+            if (isInsideAppChrome(content)) return;
+            var lines = content.querySelectorAll(MARKDOWN_LINE_SEL);
+            for (var i = 0; i < lines.length; i++) {
+                applyBlockDir(lines[i], detectTextDir(lines[i].textContent || ""));
+            }
+        });
+    }
+
     function processText(root) {
         qsaWithClosest(root, TEXT_SEL).forEach(function (el) {
             if (isInsideInput(el) || isInsideCode(el) || isInsideAppChrome(el)) return;
@@ -595,6 +615,7 @@
         processSidebarTitles(base);
         processTables(base);
         processText(base);
+        processMarkdownDocuments(base);
         processInteractiveQuestions(base);
         processInputs(base);
         processCodeBlocks(base);
@@ -687,6 +708,13 @@
             enqueueRoot(codeBlock);
             return;
         }
+        // A Markdown document is prose that happens to live in a code editor,
+        // so it has to be claimed before the code exclusion discards it.
+        var markdownDoc = el.closest && el.closest(MARKDOWN_DOC_SEL);
+        if (markdownDoc) {
+            enqueueRoot(markdownDoc);
+            return;
+        }
         if (isInsideCode(el)) return;
 
         var closest = el.closest && el.closest(BLOCK_SEL);
@@ -699,7 +727,8 @@
         // across idle frames instead of blocking the renderer with one full scan.
         qsa(el, BLOCK_SEL).forEach(function (candidate) {
             if (isInsideAppChrome(candidate)) return;
-            if (candidate.matches && candidate.matches(CODE_BLOCK_SEL)) {
+            if (candidate.matches &&
+                (candidate.matches(CODE_BLOCK_SEL) || candidate.matches(MARKDOWN_DOC_SEL))) {
                 enqueueRoot(candidate);
             } else if (!isInsideCode(candidate)) {
                 enqueueRoot(candidate);
@@ -720,6 +749,8 @@
         if (el.closest) {
             var codeBlock = el.closest(CODE_BLOCK_SEL);
             if (codeBlock) return codeBlock;
+            var markdownDoc = el.closest(MARKDOWN_DOC_SEL);
+            if (markdownDoc) return markdownDoc;
             if (isInsideCode(el)) return null;
             var table = el.closest("table");
             if (table) return table;

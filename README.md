@@ -98,6 +98,13 @@ Rightly installs a renderer payload tailored to each application. The payload fo
 - Inline code and technical controls remain LTR.
 - The GPT/Codex application shell remains LTR even when a Hebrew Windows locale makes Codex set `<html dir="rtl">`; only detected content is switched to RTL.
 - In GPT/Codex code blocks, each line containing at least one Hebrew letter is aligned RTL and to the right; all other lines remain LTR and aligned left.
+- Markdown files opened in the Codex side panel follow the same per-line rule. That
+  panel is a CodeMirror editor, which is otherwise treated as code and left alone;
+  a document is recognised by the `data-language="markdown"` CodeMirror marks, so
+  editors holding real code keep their original direction.
+- Interactive question panels are built from generic `div` and `span` elements rather
+  than prose tags. They are matched as a control cluster, and only the elements that
+  directly own text are directioned, so buttons keep their order.
 - Bullets and numbered-list markers stay on the correct side.
 - Tables containing RTL text are centered within the message width, use the correct column direction, and align RTL cells correctly.
 - Mixed Hebrew-English task titles remain left-aligned in the sidebar. Their bidi styling is applied through CSS without rewriting React-owned title or marquee content.

@@ -19,7 +19,8 @@ payload = payload.replace(
     "    window.__RT_AI_TEST_ENFORCE_APP_SHELL_LTR__ = enforceAppShellLtr;\n" +
     "    window.__RT_AI_TEST_PROCESS_SIDEBAR_TITLE__ = processSidebarTitleElement;\n" +
     "    window.__RT_AI_TEST_DIRECT_TEXT__ = directText;\n" +
-    "    window.__RT_AI_TEST_IS_QUESTION_CLUSTER__ = isQuestionCluster;\n\n" + hookPoint
+    "    window.__RT_AI_TEST_IS_QUESTION_CLUSTER__ = isQuestionCluster;\n" +
+    "    window.__RT_AI_TEST_PROCESS_MARKDOWN__ = processMarkdownDocuments;\n\n" + hookPoint
 );
 
 const context = {
@@ -39,6 +40,7 @@ const enforceAppShellLtr = context.window.__RT_AI_TEST_ENFORCE_APP_SHELL_LTR__;
 const processSidebarTitle = context.window.__RT_AI_TEST_PROCESS_SIDEBAR_TITLE__;
 const directText = context.window.__RT_AI_TEST_DIRECT_TEXT__;
 const isQuestionCluster = context.window.__RT_AI_TEST_IS_QUESTION_CLUSTER__;
+const processMarkdownDocuments = context.window.__RT_AI_TEST_PROCESS_MARKDOWN__;
 
 assert.equal(detectTextDir("Hello שלום"), "rtl");
 assert.equal(detectTextDir("translate שלום please"), "rtl");
@@ -230,3 +232,56 @@ assert.equal(directText(questionPanel), "");
 applyBlockDir(questionBody, detectTextDir(directText(questionBody)));
 assert.equal(questionBody.dir, "rtl");
 assert.equal(questionBody.style.textAlign, "right");
+
+// Markdown documents. Codex opens .md files in a CodeMirror editor, which
+// matches CODE_SEL, so the prose pass skips it; the document is directioned
+// line by line instead, and real code editors stay untouched.
+function makeMarkdownLine(text) {
+    const attributes = new Map();
+    return {
+        nodeType: 1,
+        tagName: "DIV",
+        style: {},
+        textContent: text,
+        childNodes: [],
+        hasAttribute: function (name) { return attributes.has(name); },
+        getAttribute: function (name) { return attributes.has(name) ? attributes.get(name) : null; },
+        setAttribute: function (name, value) { attributes.set(name, String(value)); },
+        removeAttribute: function (name) { attributes.delete(name); },
+        closest: function () { return null; },
+        matches: function () { return false; }
+    };
+}
+
+function makeMarkdownDocument(language, lines) {
+    return {
+        nodeType: 1,
+        tagName: "DIV",
+        style: {},
+        childNodes: [],
+        closest: function () { return null; },
+        matches: function (selector) {
+            return selector.indexOf("data-language") !== -1 && language === "markdown";
+        },
+        querySelectorAll: function (selector) {
+            return selector === ".cm-line" ? lines : [];
+        }
+    };
+}
+
+const markdownLines = [
+    makeMarkdownLine("דוח תשתיות — 15.09.2026"),
+    makeMarkdownLine("- Chrome עודכן ל־153.0.8010.37"),
+    makeMarkdownLine("All systems nominal")
+];
+processMarkdownDocuments(makeMarkdownDocument("markdown", markdownLines));
+assert.equal(markdownLines[0].dir, "rtl", "a Hebrew heading reads right to left");
+assert.equal(markdownLines[0].style.textAlign, "right");
+assert.equal(markdownLines[1].dir, "rtl", "a Hebrew list item reads right to left");
+assert.equal(markdownLines[2].dir, undefined, "an English-only line stays left to right");
+
+// A code editor keeps its own direction even where a comment is in Hebrew.
+const codeLines = [makeMarkdownLine("def main():"), makeMarkdownLine("    # בדיקה בעברית")];
+processMarkdownDocuments(makeMarkdownDocument("python", codeLines));
+assert.equal(codeLines[0].dir, undefined);
+assert.equal(codeLines[1].dir, undefined, "code editors must not be redirected");
