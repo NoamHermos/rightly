@@ -27,7 +27,13 @@
     // Codex renders its interactive question panels - the ones with a reply box
     // and Skip/Send - from generic div/span elements rather than prose tags, so
     // the ordinary TEXT_SEL pass never reaches their text.
-    var QUESTION_ROOT_SEL = "[role=\"dialog\"], [aria-modal=\"true\"], [role=\"radiogroup\"]";
+    // Codex marks the root of its question card itself. Anchoring on that is
+    // sturdier than the input-and-buttons heuristic below: the reply editor sits
+    // deep inside the card among several controls, so walking up from it can
+    // stop short of the card or count too many buttons.
+    var CODEX_QUESTION_ROOT_SEL = "[data-codex-composer-request-navigation]";
+    var QUESTION_ROOT_SEL = "[role=\"dialog\"], [aria-modal=\"true\"], [role=\"radiogroup\"], " +
+        CODEX_QUESTION_ROOT_SEL;
     var QUESTION_TEXT_SEL = "div, span, label, p, h1, h2, h3, h4, h5, h6";
     // Codex opens Markdown files in a CodeMirror editor, which matches CODE_SEL,
     // so the prose pass skips it. That is right for code but wrong for a Hebrew
@@ -42,7 +48,7 @@
     var CODE_LINE_CONTAINER_ATTR = "data-rt-ai-code-line-container";
     var CODE_NEWLINE_ATTR = "data-rt-ai-code-newline";
     var BLOCK_SEL = "table, ul, ol, " + TEXT_SEL + ", " + INPUT_SEL + ", " +
-        CODE_BLOCK_SEL + ", " + MARKDOWN_DOC_SEL;
+        CODE_BLOCK_SEL + ", " + MARKDOWN_DOC_SEL + ", " + CODEX_QUESTION_ROOT_SEL;
     var MAX_MUTATION_NODES = 200;
     var PROCESS_BATCH_SIZE = 3;
     var originalDirectionStates = new WeakMap();
