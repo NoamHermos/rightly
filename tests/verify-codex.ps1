@@ -14,7 +14,7 @@ $paths = @{
     Payload = Join-Path $repoRoot "src\gpt\codex-rtl-payload.js"
     Injector = Join-Path $repoRoot "src\gpt\gpt-rtl-cdp.js"
     RuntimeLauncher = Join-Path $repoRoot "src\gpt\launch-gpt.ps1"
-    StatusWindow = Join-Path $repoRoot "src\gpt\rightly-gpt-ui.ps1"
+    LauncherSource = Join-Path $repoRoot "src\gpt\Rightly.Gpt.Launcher.cs"
     Opener = Join-Path $repoRoot "src\gpt\open-chatgpt.ps1"
     LauncherModule = Join-Path $repoRoot "src\gpt\lib\Rightly.GptLauncher.ps1"
     Installer = Join-Path $repoRoot "installer\install.ps1"
@@ -37,7 +37,7 @@ $payload = Get-Content -LiteralPath $paths.Payload -Raw
 $injector = Get-Content -LiteralPath $paths.Injector -Raw
 $runtimeLauncher = Get-Content -LiteralPath $paths.RuntimeLauncher -Raw
 $launcherModule = Get-Content -LiteralPath $paths.LauncherModule -Raw
-$statusWindow = Get-Content -LiteralPath $paths.StatusWindow -Raw
+$nativeLauncher = Get-Content -LiteralPath $paths.LauncherSource -Raw
 $opener = Get-Content -LiteralPath $paths.Opener -Raw
 $installerModule = Get-Content -LiteralPath $paths.InstallerModule -Raw
 
@@ -45,7 +45,7 @@ $installerModule = Get-Content -LiteralPath $paths.InstallerModule -Raw
 Assert-True ($patcher.Contains('architecture = "launcher-only-loopback-runtime"')) "Launcher-only GPT architecture is missing"
 Assert-True ($patcher.Contains('Get-AppxPackage -Name "OpenAI.Codex"')) "Latest official GPT package discovery is missing"
 Assert-True ($patcher.Contains('officialPackageModified = $false')) "GPT state does not explicitly record that the package is untouched"
-Assert-True ($patcher.Contains('Start-Process -FilePath $powerShellPath -ArgumentList $arguments -Wait -PassThru')) "The GPT action does not run the controller through Windows PowerShell"
+Assert-True ($patcher.Contains('Start-Process -FilePath $Script:RuntimeExe')) "The GPT action does not run the native launcher"
 Assert-True ($patcher.Contains('Restore-LegacyPersistentPatch')) "Safe migration from old ASAR releases is missing"
 Assert-True ($patcher.Contains('packageFullName -ne $Official.PackageFullName')) "Legacy state is not isolated by package version"
 Assert-True ($patcher.Contains('rollback backup failed SHA-256 verification')) "Legacy rollback verification is missing"
@@ -74,19 +74,18 @@ Assert-True ($injector.Contains('Target.setDiscoverTargets')) "The injector does
 Assert-True ($injector.Contains('Page.enable')) "The correction is not re-applied after a navigation"
 Assert-True ($injector.Contains('live.set(targetId, connection)')) "The injector drops the connection that keeps a window corrected"
 
-# Everything starts through Microsoft's signed PowerShell host. The unsigned native
-# launcher was removed because Smart App Control blocked it.
-Assert-True (-not $patcher.Contains('New-RightlyGptLauncher')) "The removed native launcher is still built during installation"
-Assert-True ($patcher.Contains('$Script:RuntimeUi')) "Shortcuts do not start the status window"
+# The native status window delegates all behavior to the current controller.
+Assert-True ($patcher.Contains('New-RightlyGptLauncher')) "The native launcher is not built during installation"
+Assert-True ($patcher.Contains('$Script:RuntimeExe')) "The native launcher is not installed"
 Assert-True ($patcher.Contains('New-RightlyGptShortcuts')) "Managed GPT shortcuts are not created"
-Assert-True ($launcherModule.Contains('$shortcut.TargetPath = $powerShellPath')) "Rightly GPT shortcuts do not target Windows PowerShell"
-Assert-True ($launcherModule.Contains('$shortcut.Arguments = $powerShellArguments')) "Rightly GPT shortcuts do not launch the controller script"
+Assert-True ($launcherModule.Contains('$shortcut.TargetPath = $LauncherPath')) "Rightly GPT shortcuts do not target the native launcher"
 Assert-True ($launcherModule.Contains('$shortcut.IconLocation = "$IconPath,0"')) "Rightly GPT shortcuts do not use the branded icon"
 Assert-True ($launcherModule.Contains('User Pinned\TaskBar')) "Existing taskbar pins are not refreshed"
-Assert-True ($statusWindow.Contains('Local\RightlyGptLauncher')) "The launcher has no single-instance lock"
-Assert-True ($statusWindow.Contains('Rightly GPT is already starting')) "Duplicate launches have no user message"
-Assert-True ($statusWindow.Contains('System.Windows.Forms.ProgressBar')) "The launcher has no status window"
-Assert-True ($statusWindow.Contains('$timer.Add_Tick')) "The launcher polls progress on its GUI thread"
+Assert-True ($nativeLauncher.Contains('Local\RightlyGptLauncher')) "The launcher has no single-instance lock"
+Assert-True ($nativeLauncher.Contains('Rightly GPT is already starting')) "Duplicate launches have no user message"
+Assert-True ($nativeLauncher.Contains('class StatusWindow')) "The launcher has no native status window"
+Assert-True ($nativeLauncher.Contains('RefreshStatus')) "The launcher does not poll controller progress"
+Assert-True ($nativeLauncher.Contains('launch-gpt.ps1')) "The native window does not delegate to the current controller"
 Assert-True ($opener.Contains('NtResumeProcess')) "The opener cannot resume a suspended GPT app"
 Assert-True ($runtimeLauncher.Contains('Resume-SuspendedCodex')) "The launcher does not resume a suspended GPT process"
 Assert-True (-not $runtimeLauncher.Contains('--user-data-dir=')) "A second profile splits GPT in two, so notification clicks open an uncorrected window"
@@ -118,13 +117,28 @@ Assert-True ($LASTEXITCODE -eq 0) "GPT injector has JavaScript syntax errors"
 & node.exe (Join-Path $PSScriptRoot "direction.test.js")
 Assert-True ($LASTEXITCODE -eq 0) "GPT direction behavior tests failed"
 
-# Every shipped script must at least parse, since nothing is compiled any more.
+# Every shipped script must parse.
 foreach ($scriptPath in @($paths.Patcher, $paths.RuntimeLauncher, $paths.LauncherModule,
-    $paths.StatusWindow, $paths.Opener)) {
+    $paths.Opener)) {
     $parseErrors = $null
     [void][System.Management.Automation.Language.Parser]::ParseFile(
         $scriptPath, [ref] $null, [ref] $parseErrors)
     Assert-True (@($parseErrors).Count -eq 0) "PowerShell script has syntax errors: $scriptPath"
+}
+
+# Compile the same native window that installation builds, without executing it.
+$launcherTestRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("rightly-launcher-test-" + [guid]::NewGuid().ToString("N"))
+try {
+    New-Item -ItemType Directory -Path $launcherTestRoot -Force | Out-Null
+    . $paths.LauncherModule
+    $launcherTestExe = Join-Path $launcherTestRoot "Rightly GPT.exe"
+    [void](New-RightlyGptLauncher -SourcePath $paths.LauncherSource -DestinationPath $launcherTestExe `
+        -IconPath (Join-Path $repoRoot "assets\rightly-gpt.ico"))
+    $launcherFile = Get-Item -LiteralPath $launcherTestExe
+    Assert-True ($launcherFile.Length -gt 4096) "Compiled Rightly GPT launcher is unexpectedly small"
+    Assert-True ($launcherFile.VersionInfo.ProductName -eq "Rightly GPT") "Compiled launcher metadata is missing"
+} finally {
+    Remove-Item -LiteralPath $launcherTestRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 if (-not $SkipInstalledBuild) {
@@ -134,11 +148,13 @@ if (-not $SkipInstalledBuild) {
     $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
     Assert-True ($state.architecture -eq "launcher-only-loopback-runtime") "Installed GPT state uses an obsolete architecture"
     Assert-True (-not $state.officialPackageModified) "Installed state incorrectly claims that GPT was modified"
-    foreach ($name in @("codex-rtl-payload.js", "gpt-rtl-cdp.js", "launch-gpt.ps1", "rightly-gpt-ui.ps1", "open-chatgpt.ps1", "Rightly GPT.ico")) {
+    foreach ($name in @("codex-rtl-payload.js", "gpt-rtl-cdp.js", "launch-gpt.ps1", "open-chatgpt.ps1", "Rightly GPT.exe", "Rightly GPT.ico")) {
         Assert-True (Test-Path -LiteralPath (Join-Path $runtimeRoot $name) -PathType Leaf) "Installed GPT runtime file is missing: $name"
     }
     $payloadHash = (Get-FileHash -LiteralPath (Join-Path $runtimeRoot "codex-rtl-payload.js") -Algorithm SHA256).Hash.ToLowerInvariant()
     Assert-True ($payloadHash -eq $state.payloadHash) "Installed GPT payload hash does not match state"
+    $launcherHash = (Get-FileHash -LiteralPath (Join-Path $runtimeRoot "Rightly GPT.exe") -Algorithm SHA256).Hash.ToLowerInvariant()
+    Assert-True ($launcherHash -eq $state.launcherExeHash) "Installed native launcher hash does not match state"
 }
 
 Write-Host "Rightly GPT launcher-only verification passed." -ForegroundColor Green

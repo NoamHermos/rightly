@@ -3,8 +3,8 @@
 Installs the Rightly launcher for the official GPT Work / Codex application.
 
 .DESCRIPTION
-GPT is always corrected at launch through a managed Windows PowerShell shortcut and a short-lived,
-loopback-only DevTools connection. The Microsoft Store package and app.asar are
+GPT is corrected at launch through a managed native status window, the current
+PowerShell controller, and a short-lived loopback-only DevTools connection. The Microsoft Store package and app.asar are
 never modified. The launcher discovers the newest installed OpenAI.Codex
 package every time it runs, so a Store update does not invalidate its path.
 #>
@@ -27,22 +27,19 @@ $Script:ProjectRoot = Split-Path -Parent (Split-Path -Parent $Script:ModuleRoot)
 $Script:PayloadPath = Join-Path $Script:ModuleRoot "codex-rtl-payload.js"
 $Script:InjectorPath = Join-Path $Script:ModuleRoot "gpt-rtl-cdp.js"
 $Script:LauncherModulePath = Join-Path $Script:ModuleRoot "lib\Rightly.GptLauncher.ps1"
+$Script:LauncherSourcePath = Join-Path $Script:ModuleRoot "Rightly.Gpt.Launcher.cs"
 $Script:LauncherIconPath = Join-Path $Script:ProjectRoot "assets\rightly-gpt.ico"
 
 $Script:RuntimeDir = Join-Path $env:LOCALAPPDATA "Programs\Rightly\GPT"
 $Script:RuntimeIcon = Join-Path $Script:RuntimeDir "Rightly GPT.ico"
+$Script:RuntimeExe = Join-Path $Script:RuntimeDir "Rightly GPT.exe"
 $Script:RuntimeState = Join-Path $Script:RuntimeDir "state.json"
-# The shortcuts start the status window, which runs the launcher and reports its
-# progress. Programmatic launches use launch-gpt.ps1 directly so the exit code
-# still reflects whether the RTL payload was verified.
-$Script:RuntimeUi = Join-Path $Script:RuntimeDir "rightly-gpt-ui.ps1"
 $Script:RuntimeLauncher = Join-Path $Script:RuntimeDir "launch-gpt.ps1"
 $Script:RuntimeOpener = Join-Path $Script:RuntimeDir "open-chatgpt.ps1"
 $Script:RuntimeFileNames = @(
     "codex-rtl-payload.js",
     "gpt-rtl-cdp.js",
     "launch-gpt.ps1",
-    "rightly-gpt-ui.ps1",
     "open-chatgpt.ps1"
 )
 
@@ -232,11 +229,9 @@ function Copy-RuntimeFile {
 }
 
 function Remove-ObsoleteRuntimeFiles {
-    # Two names are deliberately absent so an upgrade deletes them: "Rightly GPT.exe",
-    # the unsigned launcher Smart App Control blocked, and "user-data", the separate
-    # Chromium profile a previous release started GPT on. That profile split GPT into
-    # two instances, so it is now dead weight - typically a few hundred megabytes.
-    $allowedNames = @($Script:RuntimeFileNames) + @("Rightly GPT.ico", "state.json", "logs")
+    # The interim PowerShell UI and the obsolete separate Chromium profile are
+    # removed. The native EXE is now the supported progress window again.
+    $allowedNames = @($Script:RuntimeFileNames) + @("Rightly GPT.exe", "Rightly GPT.ico", "state.json", "logs")
     foreach ($item in @(Get-ChildItem -LiteralPath $Script:RuntimeDir -Force -ErrorAction SilentlyContinue)) {
         if ($item.Name -notin $allowedNames) {
             Remove-Item -LiteralPath $item.FullName -Recurse -Force
@@ -258,6 +253,8 @@ function Install-LauncherOnlyRuntime {
     New-Item -ItemType Directory -Path $Script:RuntimeDir -Force | Out-Null
     foreach ($name in $Script:RuntimeFileNames) { Copy-RuntimeFile $name }
     Copy-Item -LiteralPath $Script:LauncherIconPath -Destination $Script:RuntimeIcon -Force
+    [void](New-RightlyGptLauncher -SourcePath $Script:LauncherSourcePath `
+        -DestinationPath $Script:RuntimeExe -IconPath $Script:RuntimeIcon)
 
     [ordered]@{
         architecture = "launcher-only-loopback-runtime"
@@ -266,12 +263,13 @@ function Install-LauncherOnlyRuntime {
         payloadHash = Get-Sha256 (Join-Path $Script:RuntimeDir "codex-rtl-payload.js")
         injectorHash = Get-Sha256 (Join-Path $Script:RuntimeDir "gpt-rtl-cdp.js")
         launcherHash = Get-Sha256 $Script:RuntimeLauncher
+        launcherExeHash = Get-Sha256 $Script:RuntimeExe
         installedAt = (Get-Date).ToString("o")
         officialPackageModified = $false
     } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $Script:RuntimeState -Encoding UTF8
 
     Remove-ObsoleteRuntimeFiles
-    foreach ($shortcutPath in @(New-RightlyGptShortcuts -ScriptPath $Script:RuntimeUi `
+    foreach ($shortcutPath in @(New-RightlyGptShortcuts -LauncherPath $Script:RuntimeExe `
         -OpenerScriptPath $Script:RuntimeOpener `
         -WorkingDirectory $Script:RuntimeDir -IconPath $Script:RuntimeIcon)) {
         Write-Ok "Created or refreshed shortcut: $shortcutPath"
@@ -290,8 +288,7 @@ function Remove-RightlyGptShortcuts {
         (Join-Path $desktop "ChatGPT (Fix).lnk"),
         (Join-Path (Join-Path ([Environment]::GetFolderPath("Programs")) "Rightly") "Rightly GPT.lnk")
     )
-    # Releases up to 26.8 shipped an unsigned "Rightly GPT.exe" launcher.
-    $legacyExe = Join-Path $Script:RuntimeDir "Rightly GPT.exe"
+    $launcherExe = Join-Path $Script:RuntimeDir "Rightly GPT.exe"
     $taskbarDir = Join-Path $env:APPDATA "Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar"
     foreach ($item in @(Get-ChildItem -LiteralPath $taskbarDir -Filter "*.lnk" -ErrorAction SilentlyContinue)) {
         try {
@@ -299,14 +296,14 @@ function Remove-RightlyGptShortcuts {
             if (-not $shortcut.TargetPath) { continue }
             $powerShellPath = Join-Path $env:WINDIR "System32\WindowsPowerShell\v1.0\powershell.exe"
             $target = [System.IO.Path]::GetFullPath($shortcut.TargetPath)
-            $targetsOldLauncher = $target.Equals(
-                [System.IO.Path]::GetFullPath($legacyExe),
+            $targetsLauncher = $target.Equals(
+                [System.IO.Path]::GetFullPath($launcherExe),
                 [System.StringComparison]::OrdinalIgnoreCase)
             $targetsController = $target.Equals(
                 [System.IO.Path]::GetFullPath($powerShellPath),
                 [System.StringComparison]::OrdinalIgnoreCase) -and
                 ($shortcut.Arguments.IndexOf($Script:RuntimeDir, [System.StringComparison]::OrdinalIgnoreCase) -ge 0)
-            if ($targetsOldLauncher -or $targetsController) {
+            if ($targetsLauncher -or $targetsController) {
                 $paths += $item.FullName
             }
         } catch { }
@@ -333,12 +330,10 @@ function Uninstall-LauncherOnlyRuntime {
 }
 
 function Start-InstalledRightlyGpt {
-    if (-not (Test-Path -LiteralPath $Script:RuntimeLauncher -PathType Leaf)) {
+    if (-not (Test-Path -LiteralPath $Script:RuntimeExe -PathType Leaf)) {
         throw "Rightly GPT is not installed. Run Repair RTL and select GPT first."
     }
-    $powerShellPath = Join-Path $env:WINDIR "System32\WindowsPowerShell\v1.0\powershell.exe"
-    $arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$Script:RuntimeLauncher`""
-    $process = Start-Process -FilePath $powerShellPath -ArgumentList $arguments -Wait -PassThru
+    $process = Start-Process -FilePath $Script:RuntimeExe -WorkingDirectory $Script:RuntimeDir -Wait -PassThru
     if ($process.ExitCode -ne 0) {
         $log = Join-Path $Script:RuntimeDir "logs\gpt-runtime.log"
         throw "GPT opened without a verified Rightly payload. See $log"
@@ -361,7 +356,7 @@ function Show-LauncherOnlyStatus {
         Write-Warn "The installed GPT runtime uses an obsolete architecture. Run Repair RTL."
         return
     }
-    foreach ($name in @($Script:RuntimeFileNames + @("Rightly GPT.ico"))) {
+    foreach ($name in @($Script:RuntimeFileNames + @("Rightly GPT.exe", "Rightly GPT.ico"))) {
         if (-not (Test-Path -LiteralPath (Join-Path $Script:RuntimeDir $name) -PathType Leaf)) {
             Write-Warn "Runtime file is missing: $name"
             return
@@ -369,6 +364,10 @@ function Show-LauncherOnlyStatus {
     }
     if ((Get-Sha256 (Join-Path $Script:RuntimeDir "codex-rtl-payload.js")) -ne [string] $state.payloadHash) {
         Write-Warn "The installed RTL payload failed SHA-256 verification. Run Repair RTL."
+        return
+    }
+    if ((Get-Sha256 $Script:RuntimeExe) -ne [string] $state.launcherExeHash) {
+        Write-Warn "The installed native launcher failed SHA-256 verification. Run Repair RTL."
         return
     }
 

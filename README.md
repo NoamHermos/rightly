@@ -37,7 +37,7 @@ It creates these shortcuts when applicable:
 | **Rightly GPT** | Opens the official GPT application and verifies the RTL payload in its live renderer | Use this instead of the normal GPT shortcut |
 | **Repair RTL** | Downloads the latest Rightly revision and repairs GPT, Claude, or both | Use after an official application update or a Rightly update |
 
-The **Rightly GPT** PowerShell shortcut is also added to the Start menu. Existing taskbar pins that already target the managed launcher are refreshed during repair.
+The native **Rightly GPT** shortcut is also added to the Start menu. Existing taskbar pins that already target the managed launcher are refreshed during repair.
 
 Claude continues to use its normal official shortcut after installation. Rightly never creates a copied GPT or Claude application.
 
@@ -48,7 +48,7 @@ Both integrations use the same direction rules, but the official applications re
 | Behavior | GPT Work / Codex | Claude Desktop / Code |
 | --- | --- | --- |
 | Official package | Protected Microsoft Store package | Official desktop installation whose application files can currently be patched |
-| Rightly delivery | Managed PowerShell shortcut and a short-lived loopback injector | Verified in-place patch with backup and rollback support |
+| Rightly delivery | Native progress window, current PowerShell controller, and a short-lived loopback injector | Verified in-place patch with backup and rollback support |
 | Does Rightly replace `app.asar`? | No | Claude's verified patch engine updates the required application resources |
 | Normal way to open | **Rightly GPT** | The normal Claude shortcut |
 | Work performed at startup | The launcher injects and verifies each newly created GPT renderer | No Rightly startup process is required after patching |
@@ -61,7 +61,7 @@ GPT's Store `app.asar` is intentionally left untouched. Current Windows builds d
 
 ## Everyday GPT behavior
 
-**Rightly GPT** is a managed shortcut to the installed controller script. The shortcut targets Microsoft's signed `powershell.exe`, avoiding Smart App Control blocks caused by an unsigned custom launcher.
+**Rightly GPT** is a managed shortcut to the native `Rightly GPT.exe` progress window. The EXE contains no injection logic: it starts the installed `launch-gpt.ps1` controller and displays the controller's current progress states until GPT is live and verified. This restores the original branded window on systems where Smart App Control is disabled or otherwise permits the local executable.
 
 Its behavior depends on GPT's current state:
 
@@ -117,7 +117,7 @@ DOM mutations are queued and processed incrementally. Newly streamed messages an
 
 The GPT integration never writes to the Microsoft Store installation:
 
-1. The **Rightly GPT** shortcut starts the installed controller through Microsoft's signed Windows PowerShell host.
+1. The **Rightly GPT** shortcut starts the native progress window, which invokes the installed controller through Windows PowerShell.
 2. The controller discovers the newest installed `OpenAI.Codex` package instead of storing a version-specific executable path.
 3. It reserves a random local port bound to `127.0.0.1` and activates the official package with Chromium's loopback DevTools endpoint.
 4. A short-lived Node.js injector connects only to page-specific local WebSockets.
@@ -187,13 +187,14 @@ endpoint accepts loopback connections only. The injector keeps that loopback
 connection for as long as GPT is open, so windows opened later are corrected too, and
 it exits with GPT.
 
-## No custom executable
+## Native launcher
 
-Rightly ships no compiled binary. Earlier releases built a small unsigned .NET
-launcher, but Windows Smart App Control blocked it outright, and it only wrapped
-work the PowerShell scripts already do. Every shortcut now runs Microsoft's own
-signed `powershell.exe`, so there is nothing left for Smart App Control to block
-and nothing that needs code signing.
+Rightly builds a small local .NET Framework `Rightly GPT.exe` during installation.
+It provides the branded startup window, single-instance behavior, progress stages,
+and failure display. The current PowerShell controller remains the source of truth
+for every GPT-state decision and live RTL verification. The executable is not code-
+signed; Windows configurations that block unsigned locally built applications must
+allow it or use a future signed release.
 
 Rightly is an independent, unofficial project and is not affiliated with OpenAI or Anthropic. Application updates can affect compatibility, and the project is used at your own risk.
 

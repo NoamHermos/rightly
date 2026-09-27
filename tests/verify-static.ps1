@@ -32,7 +32,7 @@ $required = @(
     "src\gpt\codex-rtl-payload.js",
     "src\gpt\gpt-rtl-cdp.js",
     "src\gpt\launch-gpt.ps1",
-    "src\gpt\rightly-gpt-ui.ps1",
+    "src\gpt\Rightly.Gpt.Launcher.cs",
     "src\gpt\open-chatgpt.ps1",
     "src\gpt\lib\Rightly.GptLauncher.ps1",
     "src\claude\patch.ps1",
@@ -80,7 +80,7 @@ $patcher = Read-RepoFile "src\gpt\patch.ps1"
 $launcherModule = Read-RepoFile "src\gpt\lib\Rightly.GptLauncher.ps1"
 $runtimeLauncher = Read-RepoFile "src\gpt\launch-gpt.ps1"
 $runtimeInjector = Read-RepoFile "src\gpt\gpt-rtl-cdp.js"
-$statusWindow = Read-RepoFile "src\gpt\rightly-gpt-ui.ps1"
+$nativeLauncher = Read-RepoFile "src\gpt\Rightly.Gpt.Launcher.cs"
 $opener = Read-RepoFile "src\gpt\open-chatgpt.ps1"
 $payload = Read-RepoFile "src\gpt\codex-rtl-payload.js"
 $claudePatcher = Read-RepoFile "src\claude\patch.ps1"
@@ -92,9 +92,8 @@ $thirdParty = Read-RepoFile "docs\THIRD_PARTY_NOTICES.md"
 Assert-True ($patcher.Contains('architecture = "launcher-only-loopback-runtime"')) "Launcher-only GPT architecture is missing"
 Assert-True ($patcher.Contains('officialPackageModified = $false')) "Untouched official package is not represented in state"
 Assert-True ($patcher.Contains('Get-AppxPackage -Name "OpenAI.Codex"')) "Dynamic official package discovery is missing"
-Assert-True (-not $patcher.Contains('$Script:RuntimeExe')) "Removed native GPT executable is still installed"
-Assert-True (-not $patcher.Contains('New-RightlyGptLauncher')) "Removed native GPT executable is still built"
-Assert-True ($patcher.Contains('$Script:RuntimeUi')) "GPT shortcuts do not start the status window"
+Assert-True ($patcher.Contains('$Script:RuntimeExe')) "Native GPT executable is not installed"
+Assert-True ($patcher.Contains('New-RightlyGptLauncher')) "Native GPT executable is not built"
 Assert-True ($patcher.Contains('New-RightlyGptShortcuts')) "GPT launcher shortcuts are not created"
 Assert-True (-not $patcher.Contains('New-RightlyGptAsar')) "ASAR builder remains active"
 Assert-True (-not $patcher.Contains('Grant-AsarWriteAccess')) "WindowsApps ACL mutation remains active"
@@ -113,15 +112,14 @@ Assert-True ($patcher.Contains('rollback backup failed SHA-256 verification')) "
 Assert-True ($patcher.Contains('Nothing was changed')) "Unsafe legacy state is not preserved"
 
 # Native launcher and runtime verification behavior.
-Assert-True ($launcherModule.Contains('$shortcut.TargetPath = $powerShellPath')) "GPT shortcut does not target signed Windows PowerShell"
-Assert-True ($launcherModule.Contains('$shortcut.Arguments = $powerShellArguments')) "GPT shortcut does not launch the installed controller"
+Assert-True ($launcherModule.Contains('$shortcut.TargetPath = $LauncherPath')) "GPT shortcut does not target the native launcher"
 Assert-True ($launcherModule.Contains('$shortcut.IconLocation = "$IconPath,0"')) "GPT shortcut does not use its icon"
 Assert-True ($launcherModule.Contains('User Pinned\TaskBar')) "Existing GPT taskbar pins are not refreshed"
-Assert-True (-not $launcherModule.Contains('New-RightlyGptLauncher')) "GPT launcher module still compiles an executable"
+Assert-True ($launcherModule.Contains('New-RightlyGptLauncher')) "GPT launcher module does not compile the executable"
 Assert-True ($launcherModule.Contains('ChatGPT (Fix).lnk')) "The suspended-app opener shortcut is not created"
-Assert-True ($statusWindow.Contains('Local\RightlyGptLauncher')) "GPT launcher has no single-instance lock"
-Assert-True ($statusWindow.Contains('System.Windows.Forms.ProgressBar')) "GPT launcher has no progress GUI"
-Assert-True ($statusWindow.Contains('-StatusFile')) "Status window does not read launcher progress"
+Assert-True ($nativeLauncher.Contains('Local\RightlyGptLauncher')) "GPT launcher has no single-instance lock"
+Assert-True ($nativeLauncher.Contains('class StatusWindow')) "GPT launcher has no native progress GUI"
+Assert-True ($nativeLauncher.Contains('-StatusFile')) "Native window does not read launcher progress"
 Assert-True ($opener.Contains('NtResumeProcess')) "GPT opener cannot resume a suspended app"
 Assert-True ($runtimeLauncher.Contains('Resume-SuspendedCodex')) "Launcher does not resume a suspended GPT process"
 Assert-True ($runtimeLauncher.Contains('Test-RunningRightlyPayload')) "Existing GPT payload is not verified"
@@ -191,7 +189,7 @@ Assert-True ($readme.Contains('## GPT and Claude integrations')) "README compari
 Assert-True ($readme.Contains('never writes to the Microsoft Store installation')) "README does not explain GPT architecture"
 Assert-True ($readme.Contains('What happens after an official update?')) "README does not explain update behavior"
 Assert-True ($readme.Contains('No scheduled task')) "README does not state that repair is user-triggered"
-Assert-True ($readme.Contains('Microsoft''s signed `powershell.exe`')) "README does not explain the Smart App Control-safe shortcut"
+Assert-True ($readme.Contains('native `Rightly GPT.exe`')) "README does not explain the native launcher"
 Assert-True (-not $readme.Contains('persistent in-place ASAR patch')) "README still documents removed GPT mode"
 Assert-True ($readme -notmatch '[\u0590-\u05FF\uFB1D-\uFB4F]') "README must be entirely English"
 Assert-True ($readme -notmatch '(?m)!\[') "README must not embed Markdown images"

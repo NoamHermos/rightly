@@ -179,7 +179,7 @@ function Install-RightlyRepairBundle {
         "src\gpt\codex-rtl-payload.js",
         "src\gpt\gpt-rtl-cdp.js",
         "src\gpt\launch-gpt.ps1",
-        "src\gpt\rightly-gpt-ui.ps1",
+        "src\gpt\Rightly.Gpt.Launcher.cs",
         "src\gpt\open-chatgpt.ps1",
         "src\gpt\lib\Rightly.GptLauncher.ps1",
         "src\claude\patch.ps1",
@@ -192,8 +192,9 @@ function Install-RightlyRepairBundle {
     # supported launcher-only GPT architecture.
     Remove-Item -LiteralPath (Join-Path $Script:RightlyRepairDir "src\gpt\lib\Rightly.GptAsar.ps1") `
         -Force -ErrorAction SilentlyContinue
-    # Source of the unsigned native launcher that Smart App Control blocked.
-    Remove-Item -LiteralPath (Join-Path $Script:RightlyRepairDir "src\gpt\Rightly.Gpt.Launcher.cs") `
+    # The PowerShell-only status window was used while Smart App Control blocked
+    # the unsigned EXE. It is obsolete now that the native launcher is restored.
+    Remove-Item -LiteralPath (Join-Path $Script:RightlyRepairDir "src\gpt\rightly-gpt-ui.ps1") `
         -Force -ErrorAction SilentlyContinue
     Remove-RightlyLegacyRepairBundle
     Write-RightlyOk "Repair command installed at $($Script:RightlyRepairDir)"
