@@ -20,7 +20,8 @@ payload = payload.replace(
     "    window.__RT_AI_TEST_PROCESS_SIDEBAR_TITLE__ = processSidebarTitleElement;\n" +
     "    window.__RT_AI_TEST_DIRECT_TEXT__ = directText;\n" +
     "    window.__RT_AI_TEST_IS_QUESTION_CLUSTER__ = isQuestionCluster;\n" +
-    "    window.__RT_AI_TEST_PROCESS_MARKDOWN__ = processMarkdownDocuments;\n\n" + hookPoint
+    "    window.__RT_AI_TEST_PROCESS_MARKDOWN__ = processMarkdownDocuments;\n" +
+    "    window.__RT_AI_TEST_IS_APP_CHROME__ = isInsideAppChrome;\n\n" + hookPoint
 );
 
 const context = {
@@ -41,6 +42,7 @@ const processSidebarTitle = context.window.__RT_AI_TEST_PROCESS_SIDEBAR_TITLE__;
 const directText = context.window.__RT_AI_TEST_DIRECT_TEXT__;
 const isQuestionCluster = context.window.__RT_AI_TEST_IS_QUESTION_CLUSTER__;
 const processMarkdownDocuments = context.window.__RT_AI_TEST_PROCESS_MARKDOWN__;
+const isInsideAppChrome = context.window.__RT_AI_TEST_IS_APP_CHROME__;
 
 assert.equal(detectTextDir("Hello שלום"), "rtl");
 assert.equal(detectTextDir("translate שלום please"), "rtl");
@@ -285,3 +287,17 @@ const codeLines = [makeMarkdownLine("def main():"), makeMarkdownLine("    # בד
 processMarkdownDocuments(makeMarkdownDocument("python", codeLines));
 assert.equal(codeLines[0].dir, undefined);
 assert.equal(codeLines[1].dir, undefined, "code editors must not be redirected");
+
+// Codex puts file previews and diffs in an <aside>, which the app-chrome rule
+// would otherwise exclude wholesale. Only the navigation sidebar is chrome.
+function makeChromeProbe(chromeNode) {
+    return { closest: function () { return chromeNode; } };
+}
+const contentPanel = { matches: function (selector) { return selector.indexOf("right-panel") !== -1; } };
+const navigationAside = { matches: function () { return false; } };
+
+assert.equal(isInsideAppChrome(makeChromeProbe(contentPanel)), false,
+    "the document panel holds content, so its text must still be corrected");
+assert.equal(isInsideAppChrome(makeChromeProbe(navigationAside)), true,
+    "the navigation sidebar stays excluded");
+assert.equal(isInsideAppChrome(makeChromeProbe(null)), false);

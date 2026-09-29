@@ -2,6 +2,8 @@
 
 Rightly adds intelligent Hebrew and Arabic right-to-left rendering to the official GPT Work / Codex and Claude Desktop applications on Windows.
 
+For ChatGPT in Chrome, the separate Manifest V3 extension in [`src/chrome`](src/chrome/README.he.md) fixes Hebrew paragraphs even when the first word is English. It runs only on ChatGPT, requires no desktop launcher or Node.js, and keeps code and formulas left-to-right. Load that directory using **Load unpacked** at `chrome://extensions`, then refresh existing ChatGPT tabs.
+
 It detects RTL letters anywhere in a line, including lines that begin with an English word. Mixed-language messages, lists, tables, task titles, and interactive question panels are displayed in the correct reading direction, while inline code and English-only interface elements remain left-to-right. In GPT/Codex code blocks, each line containing a Hebrew letter is aligned right-to-left independently.
 
 ## Requirements
@@ -98,6 +100,9 @@ Rightly installs a renderer payload tailored to each application. The payload fo
 - Inline code and technical controls remain LTR.
 - The GPT/Codex application shell remains LTR even when a Hebrew Windows locale makes Codex set `<html dir="rtl">`; only detected content is switched to RTL.
 - In GPT/Codex code blocks, each line containing at least one Hebrew letter is aligned RTL and to the right; all other lines remain LTR and aligned left.
+- The Codex document panel is an `<aside>`, but it holds file previews and diffs
+  rather than navigation, so it is corrected like any other content. Only the
+  navigation sidebar, and genuine toolbars inside the panel, stay untouched.
 - Markdown files opened in the Codex side panel follow the same per-line rule. That
   panel is a CodeMirror editor, which is otherwise treated as code and left alone;
   a document is recognised by the `data-language="markdown"` CodeMirror marks, so

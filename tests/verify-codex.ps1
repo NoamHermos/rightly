@@ -99,6 +99,7 @@ Assert-True ($payload.Contains('hasHebrew')) "Hebrew-anywhere detection is missi
 Assert-True ($payload.Contains('data-codex-composer-request-navigation')) "Codex question cards are not anchored on their own root marker"
 Assert-True ($payload.Contains('processInteractiveQuestions')) "Codex question cards are not directioned"
 Assert-True ($payload.Contains('processMarkdownDocuments')) "Markdown files in the side panel are not directioned"
+Assert-True ($payload.Contains('data-app-shell-focus-area')) "The document panel is still excluded as application chrome"
 Assert-True ($payload.Contains('APP_CHROME_SEL')) "Application chrome exclusion is missing"
 Assert-True ($payload.Contains('enforceAppShellLtr')) "Application shell LTR protection is missing"
 Assert-True ($payload.Contains('html[data-rt-ai-app-shell-ltr=\"true\"]')) "Application shell LTR styling is missing"

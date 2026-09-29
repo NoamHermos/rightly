@@ -22,6 +22,10 @@
     var TEXT_SEL = "p, li, h1, h2, h3, h4, h5, h6, blockquote, td, th";
     var TABLE_SEL = "table";
     var APP_CHROME_SEL = "nav, aside, [role=\"navigation\"], [role=\"menu\"], [role=\"menubar\"], [role=\"toolbar\"]";
+    // Codex puts file previews, diffs and documents in an <aside>, which
+    // APP_CHROME_SEL would otherwise exclude wholesale. The app labels that
+    // panel, and the real navigation sidebar carries no such label.
+    var CONTENT_PANEL_SEL = "aside[data-app-shell-focus-area=\"right-panel\"]";
     var APP_SHELL_LTR_ATTR = "data-rt-ai-app-shell-ltr";
     var SIDEBAR_TITLE_SEL = "aside [data-thread-title=\"true\"]";
     // Codex renders its interactive question panels - the ones with a reply box
@@ -201,7 +205,12 @@
     }
 
     function isInsideAppChrome(el) {
-        return !!(el && el.closest && el.closest(APP_CHROME_SEL));
+        var chrome = el && el.closest ? el.closest(APP_CHROME_SEL) : null;
+        if (!chrome) return false;
+        // Only the nearest match matters: a toolbar inside the content panel is
+        // still chrome, while the panel itself holds text that needs correcting.
+        if (chrome.matches && chrome.matches(CONTENT_PANEL_SEL)) return false;
+        return true;
     }
 
     // Managed DOM state ------------------------------------------------------
@@ -745,6 +754,9 @@
     function enqueueExistingContent() {
         var contentRoot = document.querySelector("main, [role=\"main\"]") || document.body;
         if (contentRoot) enqueueWorkInSubtree(contentRoot);
+        // The file preview, diff and document panel sits outside <main>, so the
+        // sweep above never reaches a document that is already open.
+        qsa(document, CONTENT_PANEL_SEL).forEach(enqueueWorkInSubtree);
         processSidebarTitles(document);
         processInputs(document);
     }
