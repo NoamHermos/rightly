@@ -40,6 +40,9 @@ const { chromium } = require("playwright");
       <p id="period">לא לפי Train — כי אז בדרך כלל נעדיף את המודל שמתאים הכי חזק ל־<span dir="ltr">train.</span></p>
       <p id="quote">ולא לפי Test — כי אז אנחנו &quot;מלמדים את ה־<span class="isolated">test&quot;.</span></p>
       <p id="plain-period">המודל נבדק על train.</p>
+      <p id="bdi-period"><span>וזה מאפשר לנו לבנות </span><bdi>likelihood.</bdi></p>
+      <p id="bdi-comma">נבחר <bdi>Regression,</bdi> ואז נמשיך.</p>
+      <p id="bdi-english">עברית <bdi>Regression,</bdi> English continues.</p>
       <p id="arrow">אם ניקח training set קצת אחר ונקבל מודל שונה מאוד → variance גבוה.</p>
       <p id="nested-arrow">שינוי קטן <strong>⇒</strong> תוצאה גדולה.</p>
       <p id="english">English → text. <span dir="ltr">Keep me.</span></p>
@@ -83,7 +86,7 @@ const { chromium } = require("playwright");
       if (side === "left") assert.ok(punct.right <= word.left + 1, `${id}: punctuation before Hebrew belongs on the visual left of the English word`);
       else assert.ok(punct.left >= word.right - 1, `${id}: punctuation before English stays on the visual right of the English word`);
     }
-    for (const [id, mark] of [["punct-hebrew", ","], ["punct-period", "."], ["punct-question", "?"], ["punct-semicolon", ";"], ["punct-colon", ":"], ["punct-exclaim", "!"], ["punct-dash", "—"], ["punct-same-span", ","]]) await punctuationSide(id, mark, "left");
+    for (const [id, mark] of [["punct-hebrew", ","], ["punct-period", "."], ["punct-question", "?"], ["punct-semicolon", ";"], ["punct-colon", ":"], ["punct-exclaim", "!"], ["punct-dash", "—"], ["punct-same-span", ","], ["bdi-comma", ","]]) await punctuationSide(id, mark, "left");
     await punctuationSide("punct-english", ",", "right");
     assert.equal(await page.locator("#punct-english span").evaluate(el => getComputedStyle(el).display), "inline-block", "English after English keeps its original presentation");
     await page.locator("#punct-hebrew").evaluate(el => el.classList.add("streamed"));
@@ -95,7 +98,16 @@ const { chromium } = require("playwright");
       assert.equal(dot.char, ".");
       assert.ok(dot.right <= Math.min(...ending.map(c => c.left)) + 1, `${id}: period must finish the Hebrew sentence left of its English ending`);
     }
-    for (const id of ["period", "quote", "plain-period"]) await checkDot(id);
+    for (const id of ["period", "quote", "plain-period", "bdi-period"]) await checkDot(id);
+    assert.equal(await page.locator("#bdi-period bdi").textContent(), "likelihood\u200f.", "ChatGPT's bdi-wrapped sentence ending gets an RTL mark");
+    assert.equal(await page.locator("#bdi-comma bdi").textContent(), "Regression\u200f,", "A bdi-wrapped English word before Hebrew gets an RTL mark");
+    assert.equal(await page.locator("#bdi-english bdi").textContent(), "Regression,", "English followed by English retains its isolated punctuation");
+    assert.equal(await page.locator("#bdi-english bdi").getAttribute("data-rightly-prose-inline"), null);
+    await page.locator("#bdi-comma").evaluate(el => { el.lastChild.data = " English continues."; });
+    await page.waitForFunction(() => document.querySelector("#bdi-comma bdi").textContent === "Regression,");
+    assert.equal(await page.locator("#bdi-comma bdi").getAttribute("data-rightly-prose-inline"), null, "A later English continuation restores bdi isolation");
+    await page.locator("#bdi-comma").evaluate(el => { el.lastChild.data = " ואז נמשיך."; });
+    await page.waitForFunction(() => document.querySelector("#bdi-comma bdi").textContent === "Regression\u200f,");
     const quote = await chars("quote");
     assert.ok(quote.at(-1).right <= quote.at(-2).left + 1, "Closing quote comes before the final period in RTL reading order");
     const expected = { ...originals, arrow: originals.arrow.replace("→", "←"), "nested-arrow": originals["nested-arrow"].replace("⇒", "⇐"), stream: originals.stream.replace("→", "←") };
@@ -140,7 +152,7 @@ const { chromium } = require("playwright");
     await page.waitForFunction(() => document.querySelector("#missing strong").hasAttribute("data-rightly-prose-inline"));
     assert.equal(await page.locator("#missing [data-rightly-prose-gap]").count(), 0, "A real space must not get an additional artificial gap");
     await page.setViewportSize({ width: 680, height: 1600 });
-    for (const id of ["period", "quote", "plain-period"]) await checkDot(id);
+    for (const id of ["period", "quote", "plain-period", "bdi-period"]) await checkDot(id);
     await page.setViewportSize({ width: 1250, height: 1200 });
     await page.locator("#period").evaluate(el => { el.firstChild.data = "Now English: "; });
     await page.waitForFunction(() => !document.querySelector("#period span").hasAttribute("data-rightly-prose-inline"));

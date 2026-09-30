@@ -18,7 +18,7 @@
   const HEBREW = /[\u05d0-\u05ea\u05ef-\u05f2\ufb1d-\ufb4f]/u;
   const ARROWS = new Map([["→", "←"], ["←", "→"], ["⇒", "⇐"], ["⇐", "⇒"],
     ["⟶", "⟵"], ["⟵", "⟶"], ["⟹", "⟸"], ["⟸", "⟹"]]);
-  const INLINE = 'span, strong, b, em, i, a, s, del, mark';
+  const INLINE = 'span, strong, b, em, i, a, s, del, mark, bdi';
   const pending = new Set();
   let framePending = false;
 
@@ -95,7 +95,8 @@
     const hebrew = HEBREW.test(text);
     if (hebrew) separateEnglishOpening(element);
     for (const inline of element.querySelectorAll(INLINE)) {
-      if (inline.closest(TARGETS) !== element || inline.closest(`${CODE_OR_MATH}, ${SHELL}, a, bdi, bdo, [contenteditable]`)) continue;
+      if (inline.closest(TARGETS) !== element || inline.closest(`${CODE_OR_MATH}, ${SHELL}, a, bdo, [contenteditable]`) ||
+        (inline.closest("bdi") && inline.closest("bdi") !== inline)) continue;
       let next = inline, following = "";
       while (next && next !== element) {
         if (next.nextSibling) {
@@ -107,7 +108,8 @@
         } else next = next.parentNode;
       }
       const value = inline.textContent || "";
-      const punctuationThenHebrew = /[\p{Script=Latin}\d]\u200f?\p{P}+[ \t]*$/u.test(value) && /^[ \t]*[\u05d0-\u05ea]/u.test(following) ||
+      const punctuationAtEnd = /[\p{Script=Latin}\d]\u200f?\p{P}+[ \t]*$/u.test(value);
+      const punctuationThenHebrew = punctuationAtEnd && /^[ \t]*[\u05d0-\u05ea]/u.test(following) ||
         /[\p{Script=Latin}\d]\u200f?\p{P}+[ \t]*[\u05d0-\u05ea]/u.test(value);
       // A purely textual inline-block isolates English plus its punctuation,
       // keeping the punctuation on the English side. Let that text participate
@@ -116,7 +118,13 @@
       const wasFlow = inline.getAttribute("data-rightly-prose-inline") === "flow";
       const flow = hebrew && (display === "inline-block" || wasFlow) && punctuationThenHebrew &&
         !inline.querySelector("img, svg, button, input, textarea, select, video, audio, code, pre, .katex, mjx-container, math");
-      const normalize = hebrew && (flow || (!wasFlow && display === "inline"));
+      // ChatGPT also wraps a final English word and its dot in <bdi>. That
+      // isolation keeps the dot on the English side even at the end of a
+      // Hebrew sentence, so release only punctuation-bearing bdi runs.
+      const bdiEnding = inline.localName === "bdi" && punctuationAtEnd &&
+        (punctuationThenHebrew || !following.trim());
+      const normalize = hebrew && (flow || (!wasFlow && display === "inline" &&
+        (inline.localName !== "bdi" || bdiEnding)));
       if (normalize) {
         const mode = flow ? "flow" : "";
         if (inline.getAttribute("data-rightly-prose-inline") !== mode) inline.setAttribute("data-rightly-prose-inline", mode);
@@ -147,9 +155,10 @@
     const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
     for (let node = walker.nextNode(); node; node = walker.nextNode()) {
       const parent = node.parentElement;
-      if (parent.closest(TARGETS) !== element || parent.closest(`${CODE_OR_MATH}, ${SHELL}, a, bdi, bdo, [contenteditable]`)) continue;
-      const value = node.data;
       const previous = proseArrows.get(node);
+      if (parent.closest(TARGETS) !== element || parent.closest(`${CODE_OR_MATH}, ${SHELL}, a, bdo, [contenteditable]`) ||
+        (parent.closest("bdi") && !parent.closest("bdi").hasAttribute("data-rightly-prose-inline") && !previous)) continue;
+      const value = node.data;
       if (!previous && !/[←→⇐⇒⟵⟶⟸⟹\p{P}]/u.test(value)) continue;
       let source = value;
       if (previous) {
@@ -252,5 +261,5 @@
       if (e.target instanceof Element && e.target.matches(INPUT)) enqueue(e.target);
     }, true);
   }
-  document.documentElement.setAttribute("data-rightly-chatgpt-version", "1.0.11");
+  document.documentElement.setAttribute("data-rightly-chatgpt-version", "1.0.12");
 })();
