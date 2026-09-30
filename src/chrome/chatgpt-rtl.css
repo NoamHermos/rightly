@@ -15,6 +15,18 @@ li[data-rightly-chat-dir] {
   list-style-position: outside;
 }
 
+/* Inline formatting participates in its Hebrew paragraph's bidi context.
+   Isolating an entire English-ended text span also isolates its final dot and
+   can put an existing space on the wrong side of an emphasized word. */
+[data-rightly-prose-inline] {
+  direction: inherit !important;
+  unicode-bidi: normal !important;
+}
+
+[data-rightly-prose-gap] {
+  margin-inline-end: 0.25em;
+}
+
 /* Isolate code and formulas even when the surrounding paragraph is Hebrew. */
 [data-rightly-chat-code] {
   direction: ltr !important;

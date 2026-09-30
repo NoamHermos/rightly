@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "scripts": {
-    "test:chrome": "node chrome-rtl.test.js && node chrome-hebrew-box.test.js"
+    "test:chrome": "node chrome-rtl.test.js && node chrome-hebrew-box.test.js && node chrome-prose.test.js"
   },
   "devDependencies": {
     "katex": "0.16.22",

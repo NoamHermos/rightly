@@ -14,6 +14,11 @@
   const SHELL = 'nav, aside, header, [role="navigation"], [role="menu"], [role="toolbar"], button';
   const TARGETS = `${PROSE}, ${INPUT}, ${USER_TEXT}`;
   const previousDir = new WeakMap();
+  const proseArrows = new WeakMap();
+  const HEBREW = /[\u05d0-\u05ea\u05ef-\u05f2\ufb1d-\ufb4f]/u;
+  const ARROWS = new Map([["→", "←"], ["←", "→"], ["⇒", "⇐"], ["⇐", "⇒"],
+    ["⟶", "⟵"], ["⟵", "⟶"], ["⟹", "⟸"], ["⟸", "⟹"]]);
+  const INLINE = 'span, strong, b, em, i, a, s, del, mark';
   const pending = new Set();
   let framePending = false;
 
@@ -56,10 +61,65 @@
     return !!element.closest(CONTENT) || !!element.closest("main");
   }
 
+  function repairProse(element, text) {
+    // Editors belong to React/ProseMirror. Only set their paragraph direction;
+    // never change their nodes, selection or composing text.
+    if (element.closest(`${INPUT}, [contenteditable]:not([contenteditable="false"])`)) return;
+    const hebrew = HEBREW.test(text);
+    for (const inline of element.querySelectorAll(INLINE)) {
+      if (inline.closest(TARGETS) !== element || inline.closest(`${CODE_OR_MATH}, ${SHELL}, a, bdi, bdo, [contenteditable]`)) continue;
+      const normalize = hebrew && getComputedStyle(inline).display === "inline";
+      if (normalize) {
+        if (!inline.hasAttribute("data-rightly-prose-inline")) inline.setAttribute("data-rightly-prose-inline", "");
+      } else inline.removeAttribute("data-rightly-prose-inline");
+      // Some Markdown has no separating space at all: <strong>Train</strong>נלמדים.
+      // Add visual clearance only at that formatting boundary. Existing spaces
+      // and Hebrew prefixes before English words remain untouched.
+      let next = inline, following = "";
+      while (next && next !== element) {
+        if (next.nextSibling) {
+          next = next.nextSibling;
+          if (next.nodeType === Node.COMMENT_NODE) continue;
+          if (next.nodeType === Node.ELEMENT_NODE && next.matches("br")) { following = "\n"; break; }
+          following = next.textContent || "";
+          if (following) break;
+        } else next = next.parentNode;
+      }
+      const gap = normalize && !inline.parentElement.closest("[data-rightly-prose-gap]") &&
+        /[A-Za-z\d]$/u.test(inline.textContent || "") && HEBREW.test(following[0] || "");
+      if (gap) {
+        if (!inline.hasAttribute("data-rightly-prose-gap")) inline.setAttribute("data-rightly-prose-gap", "");
+      } else inline.removeAttribute("data-rightly-prose-gap");
+    }
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const parent = node.parentElement;
+      if (parent.closest(TARGETS) !== element || parent.closest(`${CODE_OR_MATH}, ${SHELL}, a, bdi, bdo, [contenteditable]`)) continue;
+      const value = node.data;
+      const previous = proseArrows.get(node);
+      if (!previous && !/[←→⇐⇒⟵⟶⟸⟹]/u.test(value)) continue;
+      let source = value;
+      if (previous) {
+        // Recover the unchanged portions of the original text when streaming
+        // appends tokens to our displayed string. Every arrow is one code unit.
+        let prefix = 0, suffix = 0;
+        while (prefix < value.length && prefix < previous.output.length && value[prefix] === previous.output[prefix]) prefix++;
+        while (suffix < value.length - prefix && suffix < previous.output.length - prefix &&
+          value[value.length - suffix - 1] === previous.output[previous.output.length - suffix - 1]) suffix++;
+        source = previous.source.slice(0, prefix) + value.slice(prefix, value.length - suffix) +
+          previous.source.slice(previous.source.length - suffix);
+      }
+      const output = hebrew ? source.replace(/[←→⇐⇒⟵⟶⟸⟹]/gu, arrow => ARROWS.get(arrow)) : source;
+      proseArrows.set(node, { source, output });
+      if (output !== value) node.data = output;
+    }
+  }
+
   function processElement(element) {
     if (!isContent(element) || element.closest(CODE_OR_MATH)) return;
     const text = element.matches("textarea") ? element.value : proseText(element);
     setDirection(element, direction(text));
+    repairProse(element, text);
   }
 
   function scan(root) {
@@ -124,5 +184,5 @@
       if (e.target instanceof Element && e.target.matches(INPUT)) enqueue(e.target);
     }, true);
   }
-  document.documentElement.setAttribute("data-rightly-chatgpt-version", "1.0.7");
+  document.documentElement.setAttribute("data-rightly-chatgpt-version", "1.0.8");
 })();
