@@ -23,6 +23,10 @@ li[data-rightly-chat-dir] {
   unicode-bidi: normal !important;
 }
 
+[data-rightly-prose-inline="flow"] {
+  display: inline !important;
+}
+
 [data-rightly-prose-gap] {
   margin-inline-end: 0.25em;
 }

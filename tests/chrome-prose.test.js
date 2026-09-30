@@ -24,6 +24,15 @@ const { chromium } = require("playwright");
       <p id="plain-start">Trainנלמדים על Parameters.</p>
       <p id="plain-start-spaced">Train נלמדים על Parameters.</p>
       <p id="plain-long-start">Validation / Cross Validationנבחרים באמצעות Hyperparameters.</p>
+      <p id="punct-hebrew"><span style="display:inline-block;direction:ltr;unicode-bidi:isolate">Regression,</span> עברית ממשיכה.</p>
+      <p id="punct-english"><span style="display:inline-block;direction:ltr;unicode-bidi:isolate">Regression,</span> English ממשיכה.</p>
+      <p id="punct-period"><span style="display:inline-block;direction:ltr;unicode-bidi:isolate">squared loss.</span> ואז עברית.</p>
+      <p id="punct-question"><strong style="display:inline-block;direction:ltr;unicode-bidi:isolate">Machine Learning?</strong> בעברית.</p>
+      <p id="punct-semicolon"><span style="display:inline-block;direction:ltr;unicode-bidi:isolate">Regression;</span> עברית ממשיכה.</p>
+      <p id="punct-colon"><span style="display:inline-block;direction:ltr;unicode-bidi:isolate">Regression:</span> עברית ממשיכה.</p>
+      <p id="punct-exclaim"><span style="display:inline-block;direction:ltr;unicode-bidi:isolate">Regression!</span> עברית ממשיכה.</p>
+      <p id="punct-dash"><span style="display:inline-block;direction:ltr;unicode-bidi:isolate">Regression—</span> עברית ממשיכה.</p>
+      <p id="punct-same-span"><span style="display:inline-block;direction:ltr;unicode-bidi:isolate">Regression,עברית ממשיכה</span>.</p>
       <p id="split-start">Train<!-- streaming boundary -->נלמדים על Parameters.</p>
       <p id="line-boundary">Train<br>נלמדים על Parameters.</p>
       <p id="start-code"><code>Trainנלמדים</code> קוד מקורי.</p>
@@ -66,6 +75,19 @@ const { chromium } = require("playwright");
     for (const id of ["missing", "trailing", "existing", "nested", "plain-start", "plain-start-spaced", "plain-long-start", "split-start"]) assert.ok(await gap(id) >= 4, `${id}: English word needs a visible gap before Hebrew`);
     assert.equal(await page.locator("#plain-start").textContent(), await page.locator("#plain-start-spaced").textContent(), "Plain text needs exactly one separating space, regardless of formatting");
     assert.ok(Math.abs(await gap("missing") - await gap("nested")) <= 1, "Nested emphasis must not duplicate the added gap");
+    async function punctuationSide(id, mark, side) {
+      const all = await chars(id), punct = all.find(c => c.char === mark);
+      const word = all.slice(0, all.indexOf(punct)).filter(c => /[a-z]/i.test(c.char)).at(-1);
+      assert.ok(word, `${id}: missing English word`);
+      if (side === "left") assert.ok(punct.right <= word.left + 1, `${id}: punctuation before Hebrew belongs on the visual left of the English word`);
+      else assert.ok(punct.left >= word.right - 1, `${id}: punctuation before English stays on the visual right of the English word`);
+    }
+    for (const [id, mark] of [["punct-hebrew", ","], ["punct-period", "."], ["punct-question", "?"], ["punct-semicolon", ";"], ["punct-colon", ":"], ["punct-exclaim", "!"], ["punct-dash", "—"], ["punct-same-span", ","]]) await punctuationSide(id, mark, "left");
+    await punctuationSide("punct-english", ",", "right");
+    assert.equal(await page.locator("#punct-english span").evaluate(el => getComputedStyle(el).display), "inline-block", "English after English keeps its original presentation");
+    await page.locator("#punct-hebrew").evaluate(el => el.classList.add("streamed"));
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal(await page.locator("#punct-hebrew span").getAttribute("data-rightly-prose-inline"), "flow", "A later scan must keep the punctuation correction");
     async function checkDot(id) {
       const all = await chars(id), dot = all.at(-1);
       const ending = all.slice(-6, -1).filter(c => /[a-z]/.test(c.char));

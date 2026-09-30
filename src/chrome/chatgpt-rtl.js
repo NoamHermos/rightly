@@ -96,13 +96,6 @@
     if (hebrew) separateEnglishOpening(element);
     for (const inline of element.querySelectorAll(INLINE)) {
       if (inline.closest(TARGETS) !== element || inline.closest(`${CODE_OR_MATH}, ${SHELL}, a, bdi, bdo, [contenteditable]`)) continue;
-      const normalize = hebrew && getComputedStyle(inline).display === "inline";
-      if (normalize) {
-        if (!inline.hasAttribute("data-rightly-prose-inline")) inline.setAttribute("data-rightly-prose-inline", "");
-      } else inline.removeAttribute("data-rightly-prose-inline");
-      // Some Markdown has no separating space at all: <strong>Train</strong>נלמדים.
-      // Add visual clearance only at that formatting boundary. Existing spaces
-      // and Hebrew prefixes before English words remain untouched.
       let next = inline, following = "";
       while (next && next !== element) {
         if (next.nextSibling) {
@@ -113,8 +106,25 @@
           if (following) break;
         } else next = next.parentNode;
       }
+      const value = inline.textContent || "";
+      const punctuationThenHebrew = /[\p{Script=Latin}\d]\p{P}+[ \t]*$/u.test(value) && /^[ \t]*[\u05d0-\u05ea]/u.test(following) ||
+        /[\p{Script=Latin}\d]\p{P}+[ \t]*[\u05d0-\u05ea]/u.test(value);
+      // A purely textual inline-block isolates English plus its punctuation,
+      // keeping the punctuation on the English side. Let that text participate
+      // in the RTL line when Hebrew follows; retain atomic English-English runs.
+      const display = getComputedStyle(inline).display;
+      const flow = hebrew && (display === "inline-block" || inline.getAttribute("data-rightly-prose-inline") === "flow") && punctuationThenHebrew &&
+        !inline.querySelector("img, svg, button, input, textarea, select, video, audio, code, pre, .katex, mjx-container, math");
+      const normalize = hebrew && (display === "inline" || flow);
+      if (normalize) {
+        const mode = flow ? "flow" : "";
+        if (inline.getAttribute("data-rightly-prose-inline") !== mode) inline.setAttribute("data-rightly-prose-inline", mode);
+      } else inline.removeAttribute("data-rightly-prose-inline");
+      // Some Markdown has no separating space at all: <strong>Train</strong>נלמדים.
+      // Add visual clearance only at that formatting boundary. Existing spaces
+      // and Hebrew prefixes before English words remain untouched.
       const gap = normalize && !inline.parentElement.closest("[data-rightly-prose-gap]") &&
-        /[A-Za-z\d]$/u.test(inline.textContent || "") && HEBREW.test(following[0] || "");
+        /[A-Za-z\d]$/u.test(value) && HEBREW.test(following[0] || "");
       if (gap) {
         if (!inline.hasAttribute("data-rightly-prose-gap")) inline.setAttribute("data-rightly-prose-gap", "");
       } else inline.removeAttribute("data-rightly-prose-gap");
@@ -212,5 +222,5 @@
       if (e.target instanceof Element && e.target.matches(INPUT)) enqueue(e.target);
     }, true);
   }
-  document.documentElement.setAttribute("data-rightly-chatgpt-version", "1.0.9");
+  document.documentElement.setAttribute("data-rightly-chatgpt-version", "1.0.10");
 })();
