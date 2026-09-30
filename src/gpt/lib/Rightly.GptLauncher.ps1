@@ -56,6 +56,25 @@ function New-RightlyGptLauncher {
     }
 }
 
+function Remove-RightlyGptFixShortcut {
+    param([string] $DesktopPath = ([Environment]::GetFolderPath('Desktop')),
+        [string] $OpenerScriptPath = (Join-Path $env:LOCALAPPDATA 'Programs\Rightly\GPT\open-chatgpt.ps1'))
+    $path = Join-Path $DesktopPath 'ChatGPT (Fix).lnk'
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return }
+    $shell = New-Object -ComObject WScript.Shell
+    $shortcut = $shell.CreateShortcut($path)
+    $expectedTarget = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $expectedArgument = '(?i)(?:^|\s)-File\s+"' + [regex]::Escape($OpenerScriptPath) + '"\s*$'
+    if (-not $shortcut.TargetPath.Equals($expectedTarget, [StringComparison]::OrdinalIgnoreCase) -or
+        $shortcut.Arguments -notmatch $expectedArgument) { return }
+    $backupDir = Join-Path $env:LOCALAPPDATA 'Programs\Rightly\Backups\Shortcuts'
+    New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
+    $saved = Join-Path $backupDir ((Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N') + '.lnk')
+    Copy-Item -LiteralPath $path -Destination $saved
+    if ((Get-FileHash -LiteralPath $path).Hash -ne (Get-FileHash -LiteralPath $saved).Hash) { throw 'Obsolete shortcut backup verification failed' }
+    Remove-Item -LiteralPath $path -Force
+}
+
 function New-RightlyGptShortcuts {
     [CmdletBinding()]
     param(
@@ -65,7 +84,7 @@ function New-RightlyGptShortcuts {
         [Parameter(Mandatory)][string] $IconPath
     )
 
-    foreach ($path in @($LauncherPath, $OpenerScriptPath, $IconPath)) {
+    foreach ($path in @($LauncherPath, $IconPath)) {
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
             throw "Rightly GPT shortcut dependency is missing: $path"
         }
@@ -118,16 +137,5 @@ function New-RightlyGptShortcuts {
         Write-Output $shortcutPath
     }
 
-    # Windows sometimes starts the packaged GPT app suspended and never resumes
-    # it, leaving a windowless process that swallows every later launch. This
-    # second shortcut opens GPT and clears that state, without applying RTL.
-    $openerPath = Join-Path $desktop "ChatGPT (Fix).lnk"
-    $opener = $shell.CreateShortcut($openerPath)
-    $opener.TargetPath = $powerShellPath
-    $opener.WorkingDirectory = $WorkingDirectory
-    $opener.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$OpenerScriptPath`""
-    $opener.IconLocation = "$IconPath,0"
-    $opener.Description = "Open ChatGPT (resumes it if Windows starts it suspended)"
-    $opener.Save()
-    Write-Output $openerPath
+    Remove-RightlyGptFixShortcut -DesktopPath $desktop -OpenerScriptPath $OpenerScriptPath
 }

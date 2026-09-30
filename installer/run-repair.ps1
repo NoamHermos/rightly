@@ -2,7 +2,7 @@
 
 [CmdletBinding()]
 param(
-    [ValidateSet("Prompt", "GptWork", "ClaudeCode", "Both")]
+    [ValidateSet("Prompt", "GptWork", "ClaudeCode", "Both", "ChromeExtension")]
     [string]$Target = "Prompt"
 )
 
@@ -29,7 +29,7 @@ function Show-RightlySuccess {
     try {
         Add-Type -AssemblyName System.Windows.Forms
         [void][System.Windows.Forms.MessageBox]::Show(
-            "Every selected application completed successfully.`r`n`r`nWhen GPT was selected, Rightly installed and verified its dedicated launcher without modifying the Microsoft Store package.",
+            "The selected Rightly files were installed and verified.`r`n`r`nFor the Chrome extension, finish Load unpacked or Reload in chrome://extensions, then refresh ChatGPT tabs. This browser step is required to activate the files.",
             "Rightly repair completed",
             [System.Windows.Forms.MessageBoxButtons]::OK,
             [System.Windows.Forms.MessageBoxIcon]::Information
@@ -84,7 +84,7 @@ Write-Host ""
 if ($succeeded) {
     Write-Host "============================================================" -ForegroundColor Green
     Write-Host "  SUCCESS" -ForegroundColor Green
-    Write-Host "  Rightly RTL repair completed. You can use the app now." -ForegroundColor Green
+    Write-Host "  Rightly files are ready. Complete any browser step shown above." -ForegroundColor Green
     Write-Host "============================================================" -ForegroundColor Green
     if (-not (Show-RightlySuccess)) { Wait-RightlyClose }
     exit 0

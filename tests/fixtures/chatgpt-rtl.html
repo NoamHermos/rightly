@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="he">
+<meta charset="utf-8">
+<title>Rightly — בדיקת ChatGPT</title>
+<style>
+  body { margin: 0; background: #f6f7fb; color: #17233c; font: 20px/1.65 Arial, sans-serif; }
+  main { max-width: 880px; margin: 32px auto; padding: 28px 40px; background: white; border-radius: 18px; }
+  h1 { font-size: 28px; } p { margin: 16px 0; }
+  table { width: 100%; border-collapse: collapse; } td, th { border: 1px solid #dce2eb; padding: 8px 14px; }
+  pre { padding: 16px; background: #eef1f6; border-radius: 8px; font: 16px/1.6 Consolas, monospace; }
+  code { background: #eef1f6; } .ProseMirror { border: 1px solid #aebbd2; border-radius: 10px; padding: 12px 20px; }
+  nav { padding: 10px; } .note { font-size: 16px; color: #53627d; }
+  /* KaTeX's layout: a full-width display container and inline equation bases. */
+  .katex-display { display: block; text-align: center; margin: 1em 0; }
+  .katex-display > .katex { display: block; text-align: center; white-space: nowrap; }
+  .katex-display > .katex > .katex-html { display: block; position: relative; }
+  .katex .base { display: inline-block; white-space: nowrap; font: italic 24px/1.8 Georgia, serif; }
+  .boxed-formula { border: 1px solid currentColor; padding: 8px 14px; }
+  mjx-container[display="true"] { display: block; text-align: center; }
+</style>
+<nav><span id="navigation">ChatGPT עברית — סרגל הממשק</span></nav>
+<main>
+  <h1>Rightly — עברית שמתחילה במילה באנגלית</h1>
+  <div class="MarkdownRoot-rZKhxa" data-chatgpt-selection-message-id="fixture">
+    <p id="mixed" dir="auto" style="direction: ltr; text-align: left">ChatGPT מציג עכשיו את המשפט הזה מימין לשמאל, גם כשהוא מתחיל באנגלית.</p>
+    <p id="english" dir="auto">This paragraph stays left to right.</p>
+    <ul id="list"><li id="mixed-item">Windows עובד גם עם עברית.</li><li id="english-item">English list item.</li></ul>
+    <table id="table"><thead><tr><th>Feature תכונה</th><th>Status מצב</th></tr></thead><tbody><tr><td>RTL בעברית</td><td id="english-cell">Works</td></tr></tbody></table>
+    <p id="inline">npm הוא שם הפקודה: <code id="inline-code">npm install rightly</code></p>
+    <p id="code-only">Use <code>שלום</code> as a value.</p>
+    <pre id="pre"><code id="code">const message = "שלום";
+console.log(message);</code></pre>
+    <p id="math-paragraph">Formula הנוסחה נשארת בכיוון הנכון: <span class="katex" id="formula">x + y = 10</span></p>
+    <div dir="rtl" id="display-math-parent">
+      <p>יש לנו רק את מדגם האימון:</p>
+      <span class="block"><span class="katex-display" id="display-formula"><span class="katex" id="display-inner"><span class="katex-html"><span class="base" id="display-base">S = {(xᵢ, yᵢ)}ⁿᵢ₌₁</span></span></span></span></span>
+      <p>לכן מחשבים את ההפסד הממוצע על הדוגמאות שראינו:</p>
+      <span class="block"><span class="katex-display" id="boxed-formula"><span class="katex"><span class="katex-html"><span class="base boxed-formula" id="boxed-base">R̂ₛ(h) = 1/n ∑ ℓ(h(xᵢ), yᵢ)</span></span></span></span></span>
+      <p>זה נקרא:</p>
+      <span class="block"><span class="katex-display" id="hebrew-display"><span class="katex"><span class="katex-html"><span class="base boxed-formula" id="hebrew-base">Empirical risk — סיכון אמפירי</span></span></span></span></span>
+      <mjx-container display="true" id="mathjax-display"><span class="base" id="mathjax-base">x + y = 10</span></mjx-container>
+    </div>
+    <p id="stream">Hello</p>
+  </div>
+  <div class="text-size-chat whitespace-pre-wrap" id="user-message">Docker מתחיל הודעה בעברית.</div>
+  <form><div class="ProseMirror" contenteditable="true" id="composer"><p id="composer-mixed">ChatGPT תיבת כתיבה בעברית</p><p id="composer-english">English second paragraph.</p></div></form>
+  <p class="note">התוסף משנה את התצוגה בלבד. תוכן ההודעות נשאר ללא שינוי.</p>
+</main>
+</html>

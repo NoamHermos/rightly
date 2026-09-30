@@ -24,3 +24,12 @@ jobs:
           ./tests/verify-package.ps1
           ./tests/verify-codex.ps1 -SkipInstalledBuild
           ./tests/verify-claude.ps1 -SkipInstalledBuild
+          ./tests/chrome-install.test.ps1
+      - name: Chrome extension layout tests
+        shell: pwsh
+        run: |
+          npm ci --prefix tests --ignore-scripts
+          if (-not (Test-Path 'C:\Program Files\Google\Chrome\Application\chrome.exe')) {
+            npm exec --prefix tests -- playwright install chromium
+          }
+          npm run --prefix tests test:chrome

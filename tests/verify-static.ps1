@@ -24,6 +24,7 @@ $required = @(
     "installer\uninstall.bat",
     "installer\run-repair.ps1",
     "installer\lib\Rightly.Install.ps1",
+    "installer\lib\Rightly.Chrome.ps1",
     "assets\rightly-logo.png",
     "assets\rightly.ico",
     "assets\rightly-gpt-logo.png",
@@ -60,7 +61,7 @@ foreach ($relative in $obsolete) {
 $powerShellFiles = @(
     "installer\install.ps1", "installer\install-online.ps1", "installer\uninstall.ps1",
     "installer\uninstall-online.ps1", "installer\run-repair.ps1",
-    "installer\lib\Rightly.Install.ps1", "tests\verify-package.ps1",
+    "installer\lib\Rightly.Install.ps1", "installer\lib\Rightly.Chrome.ps1", "tests\verify-package.ps1",
     "src\gpt\patch.ps1", "src\gpt\launch-gpt.ps1",
     "src\gpt\lib\Rightly.GptLauncher.ps1", "src\claude\patch.ps1"
 )
@@ -102,7 +103,7 @@ Assert-True (-not $patcher.Contains('robocopy.exe')) "ASAR replacement remains a
 Assert-True (-not $patcher.Contains('architecture = "official-in-place-asar"')) "Persistent ASAR is still an install architecture"
 Assert-True (-not $installerModule.Contains('"src\gpt\lib\Rightly.GptAsar.ps1",')) "Repair bundle still ships ASAR tooling"
 Assert-True ($installerModule.Contains('Remove-Item -LiteralPath (Join-Path $Script:RightlyRepairDir "src\gpt\lib\Rightly.GptAsar.ps1")')) "Installed repair bundles do not delete obsolete ASAR tooling"
-Assert-True ($installerModule.Contains('if ($Target -eq "GptWork") { return $false }')) "GPT-only installation still elevates"
+Assert-True (& { . (Join-Path $repoRoot 'installer\lib\Rightly.Install.ps1'); -not (Invoke-RightlyElevatedInstallerIfNeeded -Target GptWork) }) "GPT-only installation still elevates"
 Assert-True (-not $patcher.Contains('Register-ScheduledTask')) "GPT must not register background repair"
 
 # Legacy persistent releases can only be restored with exact identity and hashes.
@@ -116,7 +117,8 @@ Assert-True ($launcherModule.Contains('$shortcut.TargetPath = $LauncherPath')) "
 Assert-True ($launcherModule.Contains('$shortcut.IconLocation = "$IconPath,0"')) "GPT shortcut does not use its icon"
 Assert-True ($launcherModule.Contains('User Pinned\TaskBar')) "Existing GPT taskbar pins are not refreshed"
 Assert-True ($launcherModule.Contains('New-RightlyGptLauncher')) "GPT launcher module does not compile the executable"
-Assert-True ($launcherModule.Contains('ChatGPT (Fix).lnk')) "The suspended-app opener shortcut is not created"
+Assert-True ($launcherModule.Contains('Remove-RightlyGptFixShortcut')) "Obsolete shortcut cleanup is missing"
+Assert-True (-not $launcherModule.Contains('$opener.Save()')) "The obsolete GPT Fix shortcut must not be recreated"
 Assert-True ($nativeLauncher.Contains('Local\RightlyGptLauncher')) "GPT launcher has no single-instance lock"
 Assert-True ($nativeLauncher.Contains('class StatusWindow')) "GPT launcher has no native progress GUI"
 Assert-True ($nativeLauncher.Contains('-StatusFile')) "Native window does not read launcher progress"

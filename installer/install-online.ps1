@@ -9,9 +9,10 @@ Run with:
 param(
     [string] $Repo = "NoamHermos/rightly",
     [string] $Branch = "main",
-    [ValidateSet("Prompt", "GptWork", "ClaudeCode", "Both")]
+    [ValidateSet("Prompt", "GptWork", "ClaudeCode", "Both", "ChromeExtension")]
     [string] $Target = "Prompt",
-    [switch] $RepairMode
+    [switch] $RepairMode,
+    [switch] $NoLaunch
 )
 
 $ErrorActionPreference = "Stop"
@@ -55,6 +56,7 @@ try {
         "-Target", $Target
     )
     if ($RepairMode) { $installerArguments += "-RepairMode" }
+    if ($NoLaunch) { $installerArguments += "-NoLaunch" }
     & $psExe @installerArguments
     if ($LASTEXITCODE -ne 0) { throw "Installer exited with code $LASTEXITCODE." }
 } finally {

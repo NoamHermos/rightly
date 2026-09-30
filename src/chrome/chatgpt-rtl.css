@@ -1,0 +1,61 @@
+/* Attribute-scoped rules leave the application shell and other sites alone. */
+[data-rightly-chat-dir="rtl"] {
+  direction: rtl !important;
+  text-align: right !important;
+  unicode-bidi: isolate !important;
+}
+
+[data-rightly-chat-dir="ltr"] {
+  direction: ltr !important;
+  text-align: left !important;
+  unicode-bidi: isolate !important;
+}
+
+li[data-rightly-chat-dir] {
+  list-style-position: outside;
+}
+
+/* Isolate code and formulas even when the surrounding paragraph is Hebrew. */
+[data-rightly-chat-code] {
+  direction: ltr !important;
+  unicode-bidi: isolate !important;
+}
+
+/* Code uses left alignment. Inline math keeps its place in the surrounding
+   paragraph, while display math retains the renderer's centered layout. */
+[data-rightly-chat-code]:is(pre, code, .code, .cm-editor, .monaco-editor, [data-language]) {
+  text-align: left !important;
+}
+
+/* KaTeX has a full-width .katex child with its own text alignment, so center
+   that child too. Leave equation internals (fractions, matrices, tags) alone. */
+.katex-display[data-rightly-chat-code],
+.katex-display[data-rightly-chat-code] > .katex,
+.MathJax_Display[data-rightly-chat-code],
+mjx-container[data-rightly-chat-code][display="true"],
+math[data-rightly-chat-code][display="block"] {
+  text-align: center !important;
+}
+
+/* Hebrew text is a separate bidi run within the LTR equation. KaTeX now
+   receives real Hebrew metrics, so boxes, labels and fractions size normally. */
+[data-rightly-math-text="rtl"] {
+  display: inline-block;
+  direction: rtl !important;
+  unicode-bidi: isolate !important;
+}
+
+/* Sentence parts flow RTL; the mathematical run inside each part stays LTR. */
+[data-rightly-math-flow="rtl"] {
+  display: inline-flex;
+  align-items: baseline;
+  direction: rtl !important;
+  unicode-bidi: isolate !important;
+  column-gap: 0.18em;
+}
+
+[data-rightly-math-part="ltr"] {
+  display: inline-block;
+  direction: ltr !important;
+  unicode-bidi: isolate !important;
+}

@@ -33,6 +33,7 @@ try {
         "installer\run-repair.ps1",
         "installer\uninstall.ps1",
         "installer\lib\Rightly.Install.ps1",
+        "installer\lib\Rightly.Chrome.ps1",
         "assets\rightly.ico",
         "assets\rightly-gpt.ico",
         "src\gpt\patch.ps1",
@@ -46,9 +47,15 @@ try {
         "src\claude\claude-rtl-payload.js",
         "src\claude\verify-asar.js"
     )
+    $chromeSource = Join-Path $repoRoot 'src\chrome'
+    $expected += @(Get-ChildItem -LiteralPath $chromeSource -File -Recurse | ForEach-Object {
+        'src\chrome\' + $_.FullName.Substring($chromeSource.Length + 1)
+    })
     foreach ($relative in $expected) {
         Assert-True (Test-Path -LiteralPath (Join-Path $repairRoot $relative) -PathType Leaf) `
             "Repair package is missing: $relative"
+        Assert-True ((Get-FileHash -LiteralPath (Join-Path $repairRoot $relative)).Hash -eq
+            (Get-FileHash -LiteralPath (Join-Path $repoRoot $relative)).Hash) "Repair copy differs: $relative"
     }
 
     $actual = @(Get-ChildItem -LiteralPath $repairRoot -File -Recurse | ForEach-Object {

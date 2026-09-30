@@ -2,15 +2,15 @@
 
 Rightly adds intelligent Hebrew and Arabic right-to-left rendering to the official GPT Work / Codex and Claude Desktop applications on Windows.
 
-For ChatGPT in Chrome, the separate Manifest V3 extension in [`src/chrome`](src/chrome/README.he.md) fixes Hebrew paragraphs even when the first word is English. It runs only on ChatGPT, requires no desktop launcher or Node.js, and keeps code and formulas left-to-right. Load that directory using **Load unpacked** at `chrome://extensions`, then refresh existing ChatGPT tabs.
+For ChatGPT in Chrome, select **ChatGPT in Chrome** in the installer or **Repair RTL**. The Manifest V3 extension in [`src/chrome`](src/chrome/README.he.md) fixes Hebrew paragraphs, centers display math, and repairs Hebrew text inside formulas, boxes, and arrow labels. It runs only on ChatGPT and requires no desktop launcher, administrator rights, or Node.js.
 
 It detects RTL letters anywhere in a line, including lines that begin with an English word. Mixed-language messages, lists, tables, task titles, and interactive question panels are displayed in the correct reading direction, while inline code and English-only interface elements remain left-to-right. In GPT/Codex code blocks, each line containing a Hebrew letter is aligned right-to-left independently.
 
 ## Requirements
 
 - Windows 10 or Windows 11.
-- The official GPT Work / Codex application and/or Claude Desktop.
-- [Node.js LTS](https://nodejs.org/).
+- The official GPT Work / Codex application, Claude Desktop, and/or Google Chrome, depending on the selected integration.
+- [Node.js LTS](https://nodejs.org/) for the desktop integrations only.
 - An internet connection during installation and repair.
 - Administrator approval for the Claude integration. GPT installation itself does not require access to `WindowsApps`.
 
@@ -29,6 +29,7 @@ Choose one target:
 1. `GPT Work / Codex`
 2. `Claude Desktop / Code`
 3. `Both`
+4. `ChatGPT in Chrome - install / update extension`
 
 The installer downloads the current `main` revision, removes known obsolete Rightly installations, and installs only the selected integration.
 
@@ -37,11 +38,25 @@ It creates these shortcuts when applicable:
 | Shortcut | Purpose | Normal use |
 | --- | --- | --- |
 | **Rightly GPT** | Opens the official GPT application and verifies the RTL payload in its live renderer | Use this instead of the normal GPT shortcut |
-| **Repair RTL** | Downloads the latest Rightly revision and repairs GPT, Claude, or both | Use after an official application update or a Rightly update |
+| **Repair RTL** | Downloads the latest Rightly revision and repairs the desktop integrations or installs/updates the Chrome extension | Use after an application or Rightly update |
 
 The native **Rightly GPT** shortcut is also added to the Start menu. Existing taskbar pins that already target the managed launcher are refreshed during repair.
 
 Claude continues to use its normal official shortcut after installation. Rightly never creates a copied GPT or Claude application.
+
+### ChatGPT in Chrome
+
+The Chrome option reads the current user's Chrome profiles to find an existing unpacked **Rightly for ChatGPT** extension. It verifies the extension's manifest and updates the same directory, preserving the loaded path and extension ID. Multiple registered copies are updated once per directory. Replaced files are backed up and the copied files are verified by SHA-256. Chrome preferences and enterprise policies are never modified.
+
+For a new installation, the extension is prepared at `%LOCALAPPDATA%\Programs\Rightly\Chrome`. Chrome then opens its extension management page:
+
+- **First installation:** enable Developer mode, click **Load unpacked**, and choose the folder printed by the installer.
+- **Existing installation:** click **Reload** on **Rightly for ChatGPT**.
+- Refresh existing ChatGPT tabs to activate the updated content scripts.
+
+The installer updates the files automatically; browser activation remains a Chrome step. These are Chrome's [documented unpacked-extension loading and reload steps](https://developer.chrome.com/docs/extensions/get-started/tutorial/hello-world#reload). The installer reports this pending step explicitly. To prepare/update the files without opening Chrome, run `installer/install.ps1 -Target ChromeExtension -NoLaunch`.
+
+Remove the extension through `chrome://extensions` when it is no longer needed. The desktop uninstall menu continues to cover GPT and Claude.
 
 ## GPT and Claude integrations
 
@@ -80,14 +95,7 @@ Its behavior depends on GPT's current state:
 
 On failure, the controller displays a clear message and a path to the diagnostic log.
 
-### Opening GPT without a correction
-
-Windows sometimes starts the packaged GPT app suspended and never resumes it. The
-app then sits at a single suspended thread with no window, and because GPT is
-single-instance, that frozen process silently swallows every later launch, so GPT
-appears not to open at all. A separate **ChatGPT (Fix)** desktop shortcut clears
-such a leftover, opens GPT, and resumes it if Windows freezes it again. It applies
-no RTL correction; use it when the goal is simply to get GPT open.
+The obsolete **ChatGPT (Fix)** shortcut is backed up and removed during repair when it points to Rightly's own helper. Future installations create only the managed **Rightly GPT** launcher and the shared **Repair RTL** shortcut.
 
 ## How it works
 
@@ -200,6 +208,22 @@ and failure display. The current PowerShell controller remains the source of tru
 for every GPT-state decision and live RTL verification. The executable is not code-
 signed; Windows configurations that block unsigned locally built applications must
 allow it or use a future signed release.
+
+## Verification
+
+The Windows CI runs the desktop checks, repair-package verification, and Chrome installer tests, including update/rollback and preservation of Chrome preferences. Chrome layout tests use real KaTeX and a separate headless browser with no user profile:
+
+```powershell
+./tests/verify-static.ps1
+./tests/verify-package.ps1
+./tests/verify-codex.ps1 -SkipInstalledBuild
+./tests/verify-claude.ps1 -SkipInstalledBuild
+./tests/chrome-install.test.ps1
+npm ci --prefix tests --ignore-scripts
+npm run --prefix tests test:chrome
+```
+
+The browser tests use installed Chrome on Windows. If Chrome is unavailable, install the test browser with `npm exec --prefix tests -- playwright install chromium`, or set `RIGHTLY_TEST_CHROME` to a Chrome/Chromium executable. Test outputs are saved under the ignored `out/chrome-rtl` directory.
 
 Rightly is an independent, unofficial project and is not affiliated with OpenAI or Anthropic. Application updates can affect compatibility, and the project is used at your own risk.
 

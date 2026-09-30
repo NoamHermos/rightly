@@ -9,6 +9,7 @@ src\claude\patch.ps1 so each integration can be tested independently.
 #>
 
 Set-StrictMode -Version 2.0
+. (Join-Path $PSScriptRoot 'Rightly.Chrome.ps1')
 
 $Script:RightlyRoot = $null
 $Script:RightlyRepairDir = $null
@@ -59,15 +60,18 @@ function Select-RightlyTarget {
     Write-Host "  1. GPT Work / Codex"
     Write-Host "  2. Claude Desktop / Code"
     Write-Host "  3. Both"
+    if ($Operation -ne 'uninstall') { Write-Host "  4. ChatGPT in Chrome - install / update extension" }
     Write-Host ""
 
     while ($true) {
-        $choice = Read-Host "Choose what to $Operation [1-3]"
+        $range = if ($Operation -eq 'uninstall') { '1-3' } else { '1-4' }
+        $choice = Read-Host "Choose what to $Operation [$range]"
         switch ($choice.Trim()) {
             "1" { return "GptWork" }
             "2" { return "ClaudeCode" }
             "3" { return "Both" }
-            default { Write-Host "Please enter 1, 2, or 3." -ForegroundColor Yellow }
+            "4" { if ($Operation -ne 'uninstall') { return 'ChromeExtension' } }
+            default { Write-Host "Please enter a number in the range $range." -ForegroundColor Yellow }
         }
     }
 }
@@ -89,7 +93,7 @@ function Invoke-RightlyElevatedInstallerIfNeeded {
     # The GPT integration lives entirely in the current user's profile and
     # never writes to WindowsApps. Claude still patches its installed files and
     # therefore keeps the existing administrator hand-off.
-    if ($Target -eq "GptWork") { return $false }
+    if ($Target -in @("GptWork", "ChromeExtension")) { return $false }
     if (Test-RightlyAdministrator) { return $false }
     if ($Elevated) { throw "Administrator rights were requested but were not granted." }
 
@@ -173,6 +177,7 @@ function Install-RightlyRepairBundle {
         "installer\run-repair.ps1",
         "installer\uninstall.ps1",
         "installer\lib\Rightly.Install.ps1",
+        "installer\lib\Rightly.Chrome.ps1",
         "assets\rightly.ico",
         "assets\rightly-gpt.ico",
         "src\gpt\patch.ps1",
@@ -187,6 +192,10 @@ function Install-RightlyRepairBundle {
         "src\claude\verify-asar.js"
     )) {
         Copy-RightlyRepairFile $relative
+    }
+    $chromeSource = Join-Path $Script:RightlyRoot 'src\chrome'
+    foreach ($file in Get-ChildItem -LiteralPath $chromeSource -File -Recurse) {
+        Copy-RightlyRepairFile ('src\chrome\' + $file.FullName.Substring($chromeSource.Length + 1))
     }
     # Remove files shipped by older repair bundles but no longer part of the
     # supported launcher-only GPT architecture.
@@ -238,6 +247,8 @@ function Remove-RightlyOldShortcuts {
 
 function New-RightlyRepairShortcut {
     Remove-RightlyOldShortcuts
+    . (Join-Path $Script:RightlyRoot 'src\gpt\lib\Rightly.GptLauncher.ps1')
+    Remove-RightlyGptFixShortcut
 
     $desktop = [Environment]::GetFolderPath("Desktop")
     $shortcutPath = Join-Path $desktop "Repair RTL.lnk"
@@ -254,7 +265,7 @@ function New-RightlyRepairShortcut {
     $shortcut.WorkingDirectory = $Script:RightlyRepairDir
     $shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$repairRunner`" -Target Prompt"
     $shortcut.IconLocation = "$icon,0"
-    $shortcut.Description = "Rightly: repair RTL in GPT, Claude, or both"
+    $shortcut.Description = "Rightly: repair GPT/Claude or install/update the ChatGPT Chrome extension"
     $shortcut.Save()
     Write-RightlyOk "Created repair shortcut: $shortcutPath"
 }

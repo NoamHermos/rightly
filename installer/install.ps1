@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Installs or repairs Rightly for GPT Work / Codex, Claude, or both.
+Installs or repairs Rightly for GPT Work / Codex, Claude, or ChatGPT in Chrome.
 
 .DESCRIPTION
 The entry point intentionally contains only orchestration. Shared installer
@@ -9,7 +9,7 @@ plumbing lives in lib\Rightly.Install.ps1; each app keeps its own patcher.
 
 [CmdletBinding()]
 param(
-    [ValidateSet("Prompt", "GptWork", "ClaudeCode", "Both")]
+    [ValidateSet("Prompt", "GptWork", "ClaudeCode", "Both", "ChromeExtension")]
     [string] $Target = "Prompt",
     [switch] $NoLaunch,
     [switch] $RepairMode,
@@ -43,7 +43,7 @@ if ($ranElevatedInstaller) {
     return
 }
 
-if (-not (Get-Command node.exe -ErrorAction SilentlyContinue)) {
+if ($Target -ne 'ChromeExtension' -and -not (Get-Command node.exe -ErrorAction SilentlyContinue)) {
     throw "Node.js is not installed. Install Node.js LTS from https://nodejs.org/ and run the installer again."
 }
 
@@ -52,6 +52,9 @@ if ($Target -in @("GptWork", "Both")) {
 }
 if ($Target -in @("ClaudeCode", "Both")) {
     Invoke-RightlyPatcher -Name "Claude Desktop / Code" -Path $claudePatcher
+}
+if ($Target -eq 'ChromeExtension') {
+    Install-RightlyChromeExtension -NoLaunch:$NoLaunch
 }
 
 Install-RightlyRepairBundle
@@ -69,5 +72,7 @@ if (-not $NoLaunch) {
 
 Write-Host ""
 $completion = if ($RepairMode) { "RTL repair" } else { "Installation" }
-Write-Host "$completion completed successfully." -ForegroundColor Green
-Write-Host "Use the Repair RTL desktop shortcut after an official app update." -ForegroundColor Green
+if ($Target -eq 'ChromeExtension') {
+    Write-Host 'Chrome extension files are ready. Complete the browser step above to activate them.' -ForegroundColor Yellow
+} else { Write-Host "$completion completed successfully." -ForegroundColor Green }
+Write-Host "Use the Repair RTL desktop shortcut for future repairs and extension updates." -ForegroundColor Green

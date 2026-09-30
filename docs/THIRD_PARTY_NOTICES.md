@@ -17,6 +17,14 @@ of `shraga100/claude-desktop-rtl-patch`.
 
 Copyright (c) 2026 shraga100
 
+## KaTeX in the Chrome extension
+
+The ChatGPT Chrome extension bundles KaTeX 0.16.22 and its original font
+metric tables to supply missing Hebrew glyph measurements. KaTeX is
+distributed under the MIT license. Its full copyright and license notice
+is preserved in `src/chrome/vendor/katex/LICENSE` and included in the
+unpacked extension's `vendor/katex/LICENSE`.
+
 ## MIT license text
 
 The components identified above are distributed under the following license:

@@ -1,0 +1,12 @@
+{
+  "name": "rightly-browser-tests",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "test:chrome": "node chrome-rtl.test.js && node chrome-hebrew-box.test.js"
+  },
+  "devDependencies": {
+    "katex": "0.16.22",
+    "playwright": "1.62.1"
+  }
+}

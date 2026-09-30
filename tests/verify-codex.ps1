@@ -92,7 +92,7 @@ Assert-True (-not $runtimeLauncher.Contains('--user-data-dir=')) "A second profi
 Assert-True ($runtimeLauncher.Contains('--watch true')) "The injector is not asked to watch for windows opened after startup"
 
 # GPT-only installation remains unelevated; Claude keeps its administrator flow.
-Assert-True ($installerModule.Contains('if ($Target -eq "GptWork") { return $false }')) "GPT-only installation still requests elevation"
+Assert-True (& { . $paths.InstallerModule; -not (Invoke-RightlyElevatedInstallerIfNeeded -Target GptWork) }) "GPT-only installation still requests elevation"
 
 # Direction behavior remains independent of the installation method.
 Assert-True ($payload.Contains('hasHebrew')) "Hebrew-anywhere detection is missing"
