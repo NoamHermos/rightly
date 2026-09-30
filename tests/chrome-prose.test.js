@@ -21,6 +21,12 @@ const { chromium } = require("playwright");
       <p id="trailing"><strong class="isolated">Validation / Cross Validation </strong>נבחרים באמצעות Hyperparameters.</p>
       <p id="existing"><strong>Train</strong> נלמדים על Parameters.</p>
       <p id="nested"><strong><span>Train</span></strong>נלמדים על Parameters.</p>
+      <p id="plain-start">Trainנלמדים על Parameters.</p>
+      <p id="plain-start-spaced">Train נלמדים על Parameters.</p>
+      <p id="plain-long-start">Validation / Cross Validationנבחרים באמצעות Hyperparameters.</p>
+      <p id="split-start">Train<!-- streaming boundary -->נלמדים על Parameters.</p>
+      <p id="line-boundary">Train<br>נלמדים על Parameters.</p>
+      <p id="start-code"><code>Trainנלמדים</code> קוד מקורי.</p>
       <p id="period">לא לפי Train — כי אז בדרך כלל נעדיף את המודל שמתאים הכי חזק ל־<span dir="ltr">train.</span></p>
       <p id="quote">ולא לפי Test — כי אז אנחנו &quot;מלמדים את ה־<span class="isolated">test&quot;.</span></p>
       <p id="plain-period">המודל נבדק על train.</p>
@@ -57,7 +63,8 @@ const { chromium } = require("playwright");
     await page.addStyleTag({ path: path.join(extension, "chatgpt-rtl.css") });
     const manifest = JSON.parse(fs.readFileSync(path.join(extension, "manifest.json"), "utf8"));
     for (const script of manifest.content_scripts[0].js) await page.addScriptTag({ path: path.join(extension, script) });
-    for (const id of ["missing", "trailing", "existing", "nested"]) assert.ok(await gap(id) >= 4, `${id}: English word needs a visible gap before Hebrew`);
+    for (const id of ["missing", "trailing", "existing", "nested", "plain-start", "plain-start-spaced", "plain-long-start", "split-start"]) assert.ok(await gap(id) >= 4, `${id}: English word needs a visible gap before Hebrew`);
+    assert.equal(await page.locator("#plain-start").textContent(), await page.locator("#plain-start-spaced").textContent(), "Plain text needs exactly one separating space, regardless of formatting");
     assert.ok(Math.abs(await gap("missing") - await gap("nested")) <= 1, "Nested emphasis must not duplicate the added gap");
     async function checkDot(id) {
       const all = await chars(id), dot = all.at(-1);
@@ -69,10 +76,18 @@ const { chromium } = require("playwright");
     const quote = await chars("quote");
     assert.ok(quote.at(-1).right <= quote.at(-2).left + 1, "Closing quote comes before the final period in RTL reading order");
     const expected = { ...originals, arrow: originals.arrow.replace("→", "←"), "nested-arrow": originals["nested-arrow"].replace("⇒", "⇐"), stream: originals.stream.replace("→", "←") };
+    for (const id of ["missing", "nested", "plain-start", "split-start"]) expected[id] = "Train נלמדים על Parameters.";
+    expected["plain-long-start"] = "Validation / Cross Validation נבחרים באמצעות Hyperparameters.";
     for (const [id, text] of Object.entries(expected)) assert.equal(await page.locator(`#${id}`).textContent(), text, `${id}: preserve wording, whitespace and protected arrows`);
     assert.equal(await page.locator("#protected [data-rightly-prose-inline], #prompt-textarea [data-rightly-prose-inline], #prefix [data-rightly-prose-gap]").count(), 0);
     assert.equal(await page.locator("#english span").getAttribute("data-rightly-prose-inline"), null);
     await page.locator("#examples").screenshot({ path: path.join(output, "prose-after.png") });
+    await page.locator("#plain-start").evaluate(el => { el.firstChild.data = "Train"; });
+    await page.waitForFunction(() => document.querySelector("#plain-start").getAttribute("dir") === "ltr");
+    await page.locator("#plain-start").evaluate(el => el.firstChild.appendData("נלמדים מחדש."));
+    await page.waitForFunction(() => document.querySelector("#plain-start").textContent === "Train נלמדים מחדש.");
+    await page.locator("#plain-start").evaluate(el => el.firstChild.appendData(" עוד טקסט"));
+    await page.waitForFunction(() => document.querySelector("#plain-start").textContent === "Train נלמדים מחדש. עוד טקסט");
     // Preserve element identity and events while changing a displayed arrow.
     await page.locator("#nested-arrow strong").evaluate(el => { el.addEventListener("click", () => el.setAttribute("data-clicked", "yes")); });
     await page.locator("#nested-arrow strong").click();

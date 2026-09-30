@@ -61,11 +61,39 @@
     return !!element.closest(CONTENT) || !!element.closest("main");
   }
 
+  function separateEnglishOpening(element) {
+    // Work on the logical paragraph opening, not on emphasis tags. The Latin
+    // phrase and first Hebrew word can share a text node or span several nodes.
+    const nodes = [];
+    let opening = "";
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (node.nodeType === Node.ELEMENT_NODE) {
+        if (node.matches(`${TARGETS}, ${CODE_OR_MATH}, ${SHELL}, a, bdi, bdo, br, [contenteditable]`)) break;
+      } else {
+        nodes.push(node);
+        opening += node.data;
+        if (HEBREW.test(opening)) break;
+      }
+    }
+    const latin = opening.match(/^[ \t]*\p{Script=Latin}[\p{Script=Latin}\p{Mark}\d \t\/-]*/u)?.[0];
+    if (!latin || !/[\p{Script=Latin}\d]$/u.test(latin) || !HEBREW.test(opening[latin.length] || "")) return;
+    let offset = latin.length;
+    for (const node of nodes) {
+      if (offset < node.length) {
+        node.insertData(offset, " ");
+        return;
+      }
+      offset -= node.length;
+    }
+  }
+
   function repairProse(element, text) {
     // Editors belong to React/ProseMirror. Only set their paragraph direction;
     // never change their nodes, selection or composing text.
     if (element.closest(`${INPUT}, [contenteditable]:not([contenteditable="false"])`)) return;
     const hebrew = HEBREW.test(text);
+    if (hebrew) separateEnglishOpening(element);
     for (const inline of element.querySelectorAll(INLINE)) {
       if (inline.closest(TARGETS) !== element || inline.closest(`${CODE_OR_MATH}, ${SHELL}, a, bdi, bdo, [contenteditable]`)) continue;
       const normalize = hebrew && getComputedStyle(inline).display === "inline";
@@ -184,5 +212,5 @@
       if (e.target instanceof Element && e.target.matches(INPUT)) enqueue(e.target);
     }, true);
   }
-  document.documentElement.setAttribute("data-rightly-chatgpt-version", "1.0.8");
+  document.documentElement.setAttribute("data-rightly-chatgpt-version", "1.0.9");
 })();
