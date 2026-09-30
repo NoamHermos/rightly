@@ -13,14 +13,21 @@ fs.mkdirSync(output, { recursive: true });
 
 (async () => {
   const sentenceArrows = [
-    ["single", String.raw`\to`, "→"],
-    ["double", String.raw`\Rightarrow`, "⇒"],
-    ["long-single", String.raw`\longrightarrow`, "⟶"],
-    ["long-double", String.raw`\implies`, "⟹"],
-    ["left-single", String.raw`\leftarrow`, "←"],
-    ["left-double", String.raw`\Leftarrow`, "⇐"],
-    ["long-left-single", String.raw`\longleftarrow`, "⟵"],
-    ["long-left-double", String.raw`\Longleftarrow`, "⟸"]
+    ["single", String.raw`\to`, "→", "←"],
+    ["double", String.raw`\Rightarrow`, "⇒", "⇐"],
+    ["long-single", String.raw`\longrightarrow`, "⟶", "⟵"],
+    ["long-double", String.raw`\implies`, "⟹", "⟸"],
+    ["left-single", String.raw`\leftarrow`, "←", "→"],
+    ["left-double", String.raw`\Leftarrow`, "⇐", "⇒"],
+    ["long-left-single", String.raw`\longleftarrow`, "⟵", "⟶"],
+    ["long-left-double", String.raw`\Longleftarrow`, "⟸", "⟹"]
+  ];
+  const arrowReplacements = [
+    ...sentenceArrows.flatMap(([id, , original, replacement]) =>
+      [[`sentence-${id}`, original, replacement], [`boxed-${id}`, original, replacement]]),
+    ["short-sentence-arrow", "→", "←"],
+    ["user-simple", "⇒", "⇐"],
+    ["user-complex", "⇒", "⇐"]
   ];
   const samples = [
     ["hebrew", String.raw`\boxed{\text{שגיאת אימון גבוהה}}`],
@@ -47,7 +54,9 @@ fs.mkdirSync(output, { recursive: true });
       const source = String.raw`\text{מודל פשוט}\ ${command}\ \text{Bias גבוה, Variance נמוך}`;
       return [[`sentence-${id}`, source], [`boxed-${id}`, String.raw`\boxed{${source}}`]];
     }),
-    ["short-sentence-arrow", String.raw`\text{קלט}\to\text{פלט}`]
+    ["short-sentence-arrow", String.raw`\text{קלט}\to\text{פלט}`],
+    ["user-simple", String.raw`\text{מודל פשוט} \Rightarrow \text{Bias גבוה, Variance נמוך}`],
+    ["user-complex", String.raw`\text{מודל מורכב} \Rightarrow \text{Bias נמוך, Variance גבוה}`]
   ];
   const warnings = [];
   const originalWarn = console.warn;
@@ -74,7 +83,16 @@ fs.mkdirSync(output, { recursive: true });
     const page = await browser.newPage({ viewport: { width: 1100, height: 1200 } });
     await page.goto(pathToFileURL(fixture).href);
     await page.evaluate(() => document.fonts.ready);
-    const initialText = await page.locator("body").textContent();
+    // Only the displayed connector characters may change; accessible math,
+    // TeX, Hebrew wording, and all other text must remain exactly the same.
+    const expectedText = await page.locator("body").evaluate((body, replacements) => {
+      const expected = body.cloneNode(true);
+      for (const [id, original, replacement] of replacements) {
+        const arrow = [...expected.querySelectorAll(`#${id} .katex-html .mrel`)].find(node => node.textContent === original);
+        arrow.textContent = replacement;
+      }
+      return expected.textContent;
+    }, arrowReplacements);
     const preserved = {};
     for (const id of ["english", "fraction"]) preserved[id] = await page.locator(`#${id} .katex-html`).innerHTML();
     const mathml = {};
@@ -158,7 +176,7 @@ fs.mkdirSync(output, { recursive: true });
       el.querySelector(".mathnormal").getBoundingClientRect().right < el.querySelector(".text").getBoundingClientRect().left);
     assert.equal(algebraOrder, true, "A single Hebrew label must preserve the surrounding algebra order");
     checks += 2;
-    assert.equal(await page.locator("body").textContent(), initialText, "Do not rewrite math or accessible MathML");
+    assert.equal(await page.locator("body").textContent(), expectedText, "Only replace displayed Hebrew sentence arrows; preserve all other text and MathML");
     for (const id of ["english", "fraction"]) {
       assert.equal(await page.locator(`#${id} .katex-html`).innerHTML(), preserved[id], `${id}: preserve mathematical and English boxes`);
       assert.equal(await page.locator(`#${id} [data-rightly-hebrew-math]`).count(), 0);
@@ -197,43 +215,46 @@ fs.mkdirSync(output, { recursive: true });
       el.querySelector(".mathnormal").getBoundingClientRect().right < el.querySelector(".mathbf").getBoundingClientRect().left);
     assert.equal(arrowDirection, true, "Hebrew labels must not reverse the mathematical arrow");
     checks++;
-    async function checkSentenceArrow(id, glyph) {
-      const actual = await page.locator(`#${id} .katex-html`).evaluate((el, glyph) => {
-        const arrow = [...el.querySelectorAll(".mrel")].find(node => node.textContent === glyph);
+    async function checkSentenceArrow(id, original, replacement) {
+      const actual = await page.locator(`#${id} .katex-html`).evaluate((el, original) => {
+        const arrow = [...el.querySelectorAll(".mrel")].find(node => node.getAttribute("data-rightly-math-arrow") === original);
+        if (!arrow) return null;
         const rect = arrow.getBoundingClientRect();
         const text = [...el.querySelectorAll(".text")].map(node => node.getBoundingClientRect());
-        const matrix = new DOMMatrix(getComputedStyle(arrow).transform);
-        return { scaleX: matrix.a, scaleY: matrix.d, skewX: matrix.c, skewY: matrix.b,
+        return { glyph: arrow.textContent, transform: getComputedStyle(arrow).transform,
           between: text[0].left >= rect.right && rect.left >= text[1].right };
-      }, glyph);
-      assert.equal(actual.scaleX, -1, `${id}: arrow head must reverse with the Hebrew sentence`);
-      assert.equal(actual.scaleY, 1, `${id}: preserve vertical orientation`);
-      assert.equal(actual.skewX, 0);
-      assert.equal(actual.skewY, 0);
+      }, original);
+      assert.ok(actual, `${id}: missing corrected arrow`);
+      assert.equal(actual.glyph, replacement, `${id}: replace the actual arrow character with its opposite`);
+      assert.equal(actual.transform, "none", `${id}: the opposite character must display without CSS mirroring`);
       assert.equal(actual.between, true, `${id}: arrow must separate the RTL subject and result`);
       checks++;
     }
-    for (const [id, , glyph] of sentenceArrows) {
-      await checkSentenceArrow(`sentence-${id}`, glyph);
-      await checkSentenceArrow(`boxed-${id}`, glyph);
-    }
-    await checkSentenceArrow("short-sentence-arrow", "→");
+    for (const replacement of arrowReplacements) await checkSentenceArrow(...replacement);
     for (const id of ["arrow", "english-arrow", "math-arrow", "bidirectional-arrow", "vertical-arrow"]) {
       const transforms = await page.locator(`#${id} .mrel`).evaluateAll(nodes => nodes.map(node => getComputedStyle(node).transform));
       assert.ok(transforms.length > 0 && transforms.every(transform => transform === "none"), `${id}: keep mathematical, English, bidirectional and vertical arrows unchanged`);
+      assert.equal(await page.locator(`#${id} [data-rightly-math-arrow]`).count(), 0, `${id}: no arrow substitution`);
       checks++;
     }
     assert.equal(await page.locator("#english-arrow .katex-html").innerHTML(), preserved["english-arrow"]);
     await page.locator("#sentence-double").screenshot({ path: path.join(output, "sentence-arrow-double.png") });
     await page.locator("#sentence-single").screenshot({ path: path.join(output, "sentence-arrow-single.png") });
+    await page.locator("#user-simple").screenshot({ path: path.join(output, "user-simple-arrow.png") });
+    await page.locator("#user-complex").screenshot({ path: path.join(output, "user-complex-arrow.png") });
+    await page.evaluate(() => {
+      for (let pass = 0; pass < 2; pass++) window.__RIGHTLY_REPAIR_HEBREW_MATH__(document.querySelector("main"), () => true);
+    });
+    assert.equal(await page.locator("body").textContent(), expectedText, "Repeated scans must not reverse a corrected arrow again");
+    checks++;
     await page.setViewportSize({ width: 680, height: 1200 });
     await page.locator("main").evaluate(el => { el.style.fontSize = "36px"; });
     for (const id of ["hebrew", "hebrew-test", "inline"]) await checkTextBox(id);
     await checkTextBox("gradient");
     await checkSentenceOrder("gradient");
     await checkArrow();
-    await checkSentenceArrow("sentence-double", "⇒");
-    await checkSentenceArrow("boxed-single", "→");
+    await checkSentenceArrow("sentence-double", "⇒", "⇐");
+    await checkSentenceArrow("boxed-single", "→", "←");
     // Streaming updates to the same formula root remove the fix for English
     // and restore it for Hebrew, while newly inserted roots are repaired too.
     const streamedEnglish = renderedSamples.find(([id]) => id === "english")[1];
@@ -251,6 +272,14 @@ fs.mkdirSync(output, { recursive: true });
     }, streamedHebrew);
     await page.waitForFunction(() => !!document.querySelector("#hebrew [data-rightly-hebrew-math]"));
     await checkTextBox("hebrew");
+    const streamedSentence = renderedSamples.find(([id]) => id === "user-complex")[1];
+    await page.locator("#user-simple .katex").evaluate((el, rendered) => {
+      const template = document.createElement("template"); template.innerHTML = rendered;
+      el.innerHTML = template.content.querySelector(".katex").innerHTML;
+    }, streamedSentence);
+    await page.waitForFunction(() => document.querySelector("#user-simple .katex-html .mrel")?.textContent === "⇐");
+    await checkSentenceArrow("user-simple", "⇒", "⇐");
+    assert.equal(await page.locator("#user-simple .katex-mathml").innerHTML(), mathml["user-complex"], "A streamed formula retains its new original TeX and MathML");
     await page.locator("#hebrew").evaluate((el, rendered) => { el.innerHTML = rendered; }, streamedHebrew);
     await page.waitForFunction(() => !!document.querySelector("#hebrew [data-rightly-hebrew-math]"));
     await checkTextBox("hebrew");

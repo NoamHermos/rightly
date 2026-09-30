@@ -7,6 +7,10 @@
   const baseMetrics = window.__RIGHTLY_KATEX_BASE_METRICS__;
   if (!renderer || !baseMetrics) return;
   const HEBREW = /[\u05d0-\u05ea\u05ef-\u05f2\ufb1d-\ufb4f]/u;
+  const REVERSED_ARROWS = new Map([
+    ["→", "←"], ["←", "→"], ["⇒", "⇐"], ["⇐", "⇒"],
+    ["⟶", "⟵"], ["⟵", "⟶"], ["⟹", "⟸"], ["⟸", "⟹"]
+  ]);
   const processed = new WeakMap();
   const canvas = document.createElement("canvas");
   const context = canvas.getContext("2d");
@@ -49,14 +53,18 @@
     // A directional connector follows the sentence when its parts move RTL.
     // Ignore KaTeX spacing and base boundaries, but not mathematical operands:
     // a Hebrew caption next to A -> B must not reverse that mathematical arrow.
-    // Mirror only the glyph, retaining the original text, TeX and MathML.
+    // Replace the displayed character, retaining the site's TeX and MathML.
     const tokens = parts.flatMap(part => part.matches(".base") ? [...part.children] : [part])
       .filter(part => !part.matches(".strut, .mspace"));
     for (let index = 0; index < tokens.length; index++) {
       const part = tokens[index];
-      if (part.matches(".mrel") && /^[←→⇐⇒⟵⟶⟸⟹]$/u.test(part.textContent || "") &&
+      const reversed = REVERSED_ARROWS.get(part.textContent);
+      if (part.matches(".mrel") && reversed && !part.hasAttribute("data-rightly-math-arrow") &&
           [tokens[index - 1], tokens[index + 1]].some(neighbor => neighbor?.matches('[data-rightly-math-text="rtl"]'))) {
-        part.setAttribute("data-rightly-math-arrow", "mirrored");
+        // A sentence may be visited at both its inner and outer base levels.
+        // Store the original character so subsequent visits cannot flip twice.
+        part.setAttribute("data-rightly-math-arrow", part.textContent);
+        part.textContent = reversed;
       }
     }
     // A boundary relation (A = Hebrew phrase) belongs between the parts,

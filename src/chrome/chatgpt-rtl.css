@@ -59,9 +59,3 @@ math[data-rightly-chat-code][display="block"] {
   direction: ltr !important;
   unicode-bidi: isolate !important;
 }
-
-/* Only horizontal arrow connectors in reordered Hebrew sentences are mirrored. */
-[data-rightly-math-arrow="mirrored"] {
-  display: inline-block;
-  transform: scaleX(-1);
-}
