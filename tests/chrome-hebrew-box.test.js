@@ -44,6 +44,10 @@ fs.mkdirSync(output, { recursive: true });
     ["gradient-spaced", String.raw`\boxed{-\nabla f\ \text{הוא כיוון הירידה המהירה ביותר}}`],
     ["gradient-unboxed", String.raw`-\nabla f\text{ הוא כיוון הירידה המהירה ביותר}`],
     ["gradient-equation", String.raw`-\nabla f = \text{כיוון הירידה המהירה ביותר}`],
+    ["boxed-mle", String.raw`\boxed{MLE = \text{מה הכי מסביר את הנתונים}}`],
+    ["boxed-map", String.raw`\boxed{MAP = \text{מה הכי סביר אחרי הנתונים}}`],
+    ["boxed-gradient-equation", String.raw`\boxed{-\nabla f = \text{כיוון הירידה המהירה ביותר}}`],
+    ["boxed-math-definition", String.raw`\boxed{MLE=A+B=\text{מה הכי מסביר את הנתונים}}`],
     ["change", String.raw`\boxed{\text{שינוי כולל}\approx\text{השפעת התזוזה בציר הראשון}+\text{השפעת התזוזה בציר השני}}`],
     ["arrow", String.raw`S\xrightarrow{\text{אלגוריתם אימון}}\mathbf{w}`],
     ["english-arrow", String.raw`\text{Simple model}\Rightarrow\text{high Bias, low Variance}`],
@@ -142,30 +146,37 @@ fs.mkdirSync(output, { recursive: true });
       checks++;
     }
     for (const id of ["hebrew", "hebrew-test", "mixed-text", "formula-with-text", "inline", "gradient", "gradient-spaced", "change"]) await checkTextBox(id);
-    async function checkSentenceOrder(id) {
-      const actual = await page.locator(`#${id} .katex-html`).evaluate(el => {
+    async function checkSentenceOrder(id, expectedGlyphs = "−∇f") {
+      const actual = await page.locator(`#${id} .katex-html`).evaluate((el, expectedGlyphs) => {
         const text = el.querySelector(".text").getBoundingClientRect();
+        const relationNode = [...el.querySelectorAll(".mrel")].filter(node => node.textContent === "=").at(-1);
         const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
         const glyphs = [];
         for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-          if (node.parentElement.closest(".text")) continue;
+          if (node.parentElement.closest(".text") || relationNode?.contains(node)) continue;
           for (let index = 0; index < node.length; index++) {
-            if (!/[−∇f]/.test(node.textContent[index])) continue;
+            if (!expectedGlyphs.includes(node.textContent[index])) continue;
             const range = document.createRange(); range.setStart(node, index); range.setEnd(node, index + 1);
             const rect = range.getBoundingClientRect(); glyphs.push({char:node.textContent[index],left:rect.left,right:rect.right});
           }
         }
-        const relation = [...el.querySelectorAll(".mrel")].find(node => node.textContent === "=")?.getBoundingClientRect();
+        const relation = relationNode?.getBoundingClientRect();
         return { glyphs, gap: Math.min(...glyphs.map(g => g.left)) - text.right,
           relationBetween: !relation || (relation.left > text.right && relation.right < Math.min(...glyphs.map(g => g.left))) };
-      });
-      assert.equal(actual.glyphs.map(g => g.char).join(""), "−∇f");
-      assert.ok(actual.glyphs.every((g, index, all) => !index || all[index - 1].left < g.left), `${id}: preserve minus/gradient/variable order`);
+      }, expectedGlyphs);
+      assert.equal(actual.glyphs.map(g => g.char).join(""), expectedGlyphs);
+      assert.ok(actual.glyphs.every((g, index, all) => !index || all[index - 1].left < g.left), `${id}: preserve the internal mathematical order`);
       assert.ok(actual.gap >= 2, `${id}: mathematical subject must sit right of the Hebrew phrase with a gap: ${JSON.stringify(actual)}`);
       assert.ok(actual.relationBetween, `${id}: equality must separate the mathematical subject and Hebrew phrase`);
       checks++;
     }
     for (const id of ["gradient", "gradient-spaced", "gradient-unboxed", "gradient-equation"]) await checkSentenceOrder(id);
+    for (const [id, glyphs] of [["boxed-mle", "MLE"], ["boxed-map", "MAP"], ["boxed-gradient-equation", "−∇f"], ["boxed-math-definition", "MLE=A+B"]]) {
+      await checkSentenceOrder(id, glyphs);
+      await checkTextBox(id);
+    }
+    await page.locator("#boxed-mle").screenshot({ path: path.join(output, "boxed-mle-after.png") });
+    await page.locator("#boxed-map").screenshot({ path: path.join(output, "boxed-map-after.png") });
     await page.locator("#gradient").screenshot({ path: path.join(output, "sentence-order-after.png") });
     const equationTextOrder = await page.locator("#change .text").evaluateAll(nodes => {
       const rects = nodes.map(node => node.getBoundingClientRect());
@@ -252,6 +263,8 @@ fs.mkdirSync(output, { recursive: true });
     for (const id of ["hebrew", "hebrew-test", "inline"]) await checkTextBox(id);
     await checkTextBox("gradient");
     await checkSentenceOrder("gradient");
+    await checkSentenceOrder("boxed-mle", "MLE");
+    await checkTextBox("boxed-mle");
     await checkArrow();
     await checkSentenceArrow("sentence-double", "⇒", "⇐");
     await checkSentenceArrow("boxed-single", "→", "←");

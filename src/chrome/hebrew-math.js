@@ -86,6 +86,12 @@
     }
     const flow = document.createElement("span");
     flow.setAttribute("data-rightly-math-flow", "rtl");
+    // Boxed expressions keep relations beside separate spacing spans. Those
+    // spans are presentation, not operands: MLE = Hebrew must split at the
+    // equals sign just like an unboxed equation split into KaTeX bases.
+    const contentParts = expanded.filter(part => !part.matches(".strut, .mspace"));
+    const separators = new Set(contentParts.filter((part, index) => part.matches(".mrel, .mbin") &&
+      [contentParts[index - 1], contentParts[index + 1]].some(neighbor => neighbor && isHebrewPart(neighbor))));
     let mathRun = null;
     for (let index = 0; index < expanded.length; index++) {
       const part = expanded[index];
@@ -93,8 +99,7 @@
         flow.append(part);
         mathRun = null;
       } else {
-        const separator = part.matches(".mrel, .mbin") &&
-          ((index > 0 && isHebrewPart(expanded[index - 1])) || (index + 1 < expanded.length && isHebrewPart(expanded[index + 1])));
+        const separator = separators.has(part);
         if (separator) mathRun = null;
         if (!mathRun) {
           mathRun = document.createElement("span");
