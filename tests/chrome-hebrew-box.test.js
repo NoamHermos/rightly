@@ -12,6 +12,16 @@ const katex = require("katex");
 fs.mkdirSync(output, { recursive: true });
 
 (async () => {
+  const sentenceArrows = [
+    ["single", String.raw`\to`, "→"],
+    ["double", String.raw`\Rightarrow`, "⇒"],
+    ["long-single", String.raw`\longrightarrow`, "⟶"],
+    ["long-double", String.raw`\implies`, "⟹"],
+    ["left-single", String.raw`\leftarrow`, "←"],
+    ["left-double", String.raw`\Leftarrow`, "⇐"],
+    ["long-left-single", String.raw`\longleftarrow`, "⟵"],
+    ["long-left-double", String.raw`\Longleftarrow`, "⟸"]
+  ];
   const samples = [
     ["hebrew", String.raw`\boxed{\text{שגיאת אימון גבוהה}}`],
     ["hebrew-test", String.raw`\boxed{\text{שגיאת מבחן גבוהה}}`],
@@ -28,7 +38,16 @@ fs.mkdirSync(output, { recursive: true });
     ["gradient-unboxed", String.raw`-\nabla f\text{ הוא כיוון הירידה המהירה ביותר}`],
     ["gradient-equation", String.raw`-\nabla f = \text{כיוון הירידה המהירה ביותר}`],
     ["change", String.raw`\boxed{\text{שינוי כולל}\approx\text{השפעת התזוזה בציר הראשון}+\text{השפעת התזוזה בציר השני}}`],
-    ["arrow", String.raw`S\xrightarrow{\text{אלגוריתם אימון}}\mathbf{w}`]
+    ["arrow", String.raw`S\xrightarrow{\text{אלגוריתם אימון}}\mathbf{w}`],
+    ["english-arrow", String.raw`\text{Simple model}\Rightarrow\text{high Bias, low Variance}`],
+    ["math-arrow", String.raw`A\to B\quad\text{העתקה}`],
+    ["bidirectional-arrow", String.raw`\text{תנאי ראשון}\Leftrightarrow\text{תנאי שני}`],
+    ["vertical-arrow", String.raw`\text{כיוון השינוי}\uparrow\text{ערך גבוה}`],
+    ...sentenceArrows.flatMap(([id, command]) => {
+      const source = String.raw`\text{מודל פשוט}\ ${command}\ \text{Bias גבוה, Variance נמוך}`;
+      return [[`sentence-${id}`, source], [`boxed-${id}`, String.raw`\boxed{${source}}`]];
+    }),
+    ["short-sentence-arrow", String.raw`\text{קלט}\to\text{פלט}`]
   ];
   const warnings = [];
   const originalWarn = console.warn;
@@ -60,6 +79,7 @@ fs.mkdirSync(output, { recursive: true });
     for (const id of ["english", "fraction"]) preserved[id] = await page.locator(`#${id} .katex-html`).innerHTML();
     const mathml = {};
     for (const [id] of samples) mathml[id] = await page.locator(`#${id} .katex-mathml`).innerHTML();
+    preserved["english-arrow"] = await page.locator("#english-arrow .katex-html").innerHTML();
     // Establish the reported defect with the unmodified KaTeX renderer.
     const before = await page.locator("#hebrew .katex-html").evaluate(el => ({
       box: el.querySelector(".fbox").getBoundingClientRect().height,
@@ -177,12 +197,43 @@ fs.mkdirSync(output, { recursive: true });
       el.querySelector(".mathnormal").getBoundingClientRect().right < el.querySelector(".mathbf").getBoundingClientRect().left);
     assert.equal(arrowDirection, true, "Hebrew labels must not reverse the mathematical arrow");
     checks++;
+    async function checkSentenceArrow(id, glyph) {
+      const actual = await page.locator(`#${id} .katex-html`).evaluate((el, glyph) => {
+        const arrow = [...el.querySelectorAll(".mrel")].find(node => node.textContent === glyph);
+        const rect = arrow.getBoundingClientRect();
+        const text = [...el.querySelectorAll(".text")].map(node => node.getBoundingClientRect());
+        const matrix = new DOMMatrix(getComputedStyle(arrow).transform);
+        return { scaleX: matrix.a, scaleY: matrix.d, skewX: matrix.c, skewY: matrix.b,
+          between: text[0].left >= rect.right && rect.left >= text[1].right };
+      }, glyph);
+      assert.equal(actual.scaleX, -1, `${id}: arrow head must reverse with the Hebrew sentence`);
+      assert.equal(actual.scaleY, 1, `${id}: preserve vertical orientation`);
+      assert.equal(actual.skewX, 0);
+      assert.equal(actual.skewY, 0);
+      assert.equal(actual.between, true, `${id}: arrow must separate the RTL subject and result`);
+      checks++;
+    }
+    for (const [id, , glyph] of sentenceArrows) {
+      await checkSentenceArrow(`sentence-${id}`, glyph);
+      await checkSentenceArrow(`boxed-${id}`, glyph);
+    }
+    await checkSentenceArrow("short-sentence-arrow", "→");
+    for (const id of ["arrow", "english-arrow", "math-arrow", "bidirectional-arrow", "vertical-arrow"]) {
+      const transforms = await page.locator(`#${id} .mrel`).evaluateAll(nodes => nodes.map(node => getComputedStyle(node).transform));
+      assert.ok(transforms.length > 0 && transforms.every(transform => transform === "none"), `${id}: keep mathematical, English, bidirectional and vertical arrows unchanged`);
+      checks++;
+    }
+    assert.equal(await page.locator("#english-arrow .katex-html").innerHTML(), preserved["english-arrow"]);
+    await page.locator("#sentence-double").screenshot({ path: path.join(output, "sentence-arrow-double.png") });
+    await page.locator("#sentence-single").screenshot({ path: path.join(output, "sentence-arrow-single.png") });
     await page.setViewportSize({ width: 680, height: 1200 });
     await page.locator("main").evaluate(el => { el.style.fontSize = "36px"; });
     for (const id of ["hebrew", "hebrew-test", "inline"]) await checkTextBox(id);
     await checkTextBox("gradient");
     await checkSentenceOrder("gradient");
     await checkArrow();
+    await checkSentenceArrow("sentence-double", "⇒");
+    await checkSentenceArrow("boxed-single", "→");
     // Streaming updates to the same formula root remove the fix for English
     // and restore it for Hebrew, while newly inserted roots are repaired too.
     const streamedEnglish = renderedSamples.find(([id]) => id === "english")[1];

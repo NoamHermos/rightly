@@ -46,6 +46,19 @@
     const words = hebrewParts.flatMap(part => (part.textContent || "").match(/[\u05d0-\u05ea\u05ef-\u05f2\ufb1d-\ufb4f]+/gu) || []);
     const visibleParts = parts.filter(part => (part.textContent || "").replace(/[\s\u200b]/gu, ""));
     if (words.length < 2 || visibleParts.length < 2) return;
+    // A directional connector follows the sentence when its parts move RTL.
+    // Ignore KaTeX spacing and base boundaries, but not mathematical operands:
+    // a Hebrew caption next to A -> B must not reverse that mathematical arrow.
+    // Mirror only the glyph, retaining the original text, TeX and MathML.
+    const tokens = parts.flatMap(part => part.matches(".base") ? [...part.children] : [part])
+      .filter(part => !part.matches(".strut, .mspace"));
+    for (let index = 0; index < tokens.length; index++) {
+      const part = tokens[index];
+      if (part.matches(".mrel") && /^[←→⇐⇒⟵⟶⟸⟹]$/u.test(part.textContent || "") &&
+          [tokens[index - 1], tokens[index + 1]].some(neighbor => neighbor?.matches('[data-rightly-math-text="rtl"]'))) {
+        part.setAttribute("data-rightly-math-arrow", "mirrored");
+      }
+    }
     // A boundary relation (A = Hebrew phrase) belongs between the parts,
     // rather than at the far end of the isolated LTR mathematical run.
     const expanded = [];
