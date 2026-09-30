@@ -33,6 +33,7 @@ const { chromium } = require("playwright");
       <p id="punct-exclaim"><span style="display:inline-block;direction:ltr;unicode-bidi:isolate">Regression!</span> עברית ממשיכה.</p>
       <p id="punct-dash"><span style="display:inline-block;direction:ltr;unicode-bidi:isolate">Regression—</span> עברית ממשיכה.</p>
       <p id="punct-same-span"><span style="display:inline-block;direction:ltr;unicode-bidi:isolate">Regression,עברית ממשיכה</span>.</p>
+      <p id="user-case">למרות שאף פעם לא עשית gradient על ה־test, ההחלטות שלך כבר תלויות בו.</p>
       <p id="split-start">Train<!-- streaming boundary -->נלמדים על Parameters.</p>
       <p id="line-boundary">Train<br>נלמדים על Parameters.</p>
       <p id="start-code"><code>Trainנלמדים</code> קוד מקורי.</p>
@@ -100,10 +101,23 @@ const { chromium } = require("playwright");
     const expected = { ...originals, arrow: originals.arrow.replace("→", "←"), "nested-arrow": originals["nested-arrow"].replace("⇒", "⇐"), stream: originals.stream.replace("→", "←") };
     for (const id of ["missing", "nested", "plain-start", "split-start"]) expected[id] = "Train נלמדים על Parameters.";
     expected["plain-long-start"] = "Validation / Cross Validation נבחרים באמצעות Hyperparameters.";
-    for (const [id, text] of Object.entries(expected)) assert.equal(await page.locator(`#${id}`).textContent(), text, `${id}: preserve wording, whitespace and protected arrows`);
+    for (const [id, text] of Object.entries(expected)) {
+      const actual = await page.locator(`#${id}`).textContent();
+      assert.equal(actual.replace(/\u200f(?=\p{P})/gu, ""), text, `${id}: preserve visible wording, whitespace and protected arrows`);
+    }
+    for (const id of ["punct-hebrew", "punct-period", "punct-question", "punct-semicolon", "punct-colon", "punct-exclaim", "punct-dash", "punct-same-span"]) {
+      assert.match(await page.locator(`#${id} span, #${id} strong`).first().textContent(), /[\p{Script=Latin}\d]\u200f\p{P}/u, `${id}: put one RTL mark before the punctuation`);
+    }
+    assert.equal((await page.locator("#punct-english span").textContent()).includes("\u200f"), false, "Keep English to English punctuation unchanged");
+    assert.match(await page.locator("#user-case").textContent(), /test\u200f, ההחלטות/u, "Actual reported sentence gets an RTL mark before its comma");
     assert.equal(await page.locator("#protected [data-rightly-prose-inline], #prompt-textarea [data-rightly-prose-inline], #prefix [data-rightly-prose-gap]").count(), 0);
     assert.equal(await page.locator("#english span").getAttribute("data-rightly-prose-inline"), null);
     await page.locator("#examples").screenshot({ path: path.join(output, "prose-after.png") });
+    await page.locator("#punct-hebrew span").evaluate(el => { el.firstChild.data = "Regression?"; });
+    await page.waitForFunction(() => document.querySelector("#punct-hebrew span").textContent === "Regression\u200f?");
+    await page.locator("#punct-hebrew").evaluate(el => { el.lastChild.data = " English ממשיכה."; });
+    await page.waitForFunction(() => document.querySelector("#punct-hebrew span").textContent === "Regression?");
+    assert.equal(await page.locator("#punct-hebrew span").evaluate(el => getComputedStyle(el).display), "inline-block", "English following English restores the original inline layout");
     await page.locator("#plain-start").evaluate(el => { el.firstChild.data = "Train"; });
     await page.waitForFunction(() => document.querySelector("#plain-start").getAttribute("dir") === "ltr");
     await page.locator("#plain-start").evaluate(el => el.firstChild.appendData("נלמדים מחדש."));

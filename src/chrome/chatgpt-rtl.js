@@ -107,15 +107,16 @@
         } else next = next.parentNode;
       }
       const value = inline.textContent || "";
-      const punctuationThenHebrew = /[\p{Script=Latin}\d]\p{P}+[ \t]*$/u.test(value) && /^[ \t]*[\u05d0-\u05ea]/u.test(following) ||
-        /[\p{Script=Latin}\d]\p{P}+[ \t]*[\u05d0-\u05ea]/u.test(value);
+      const punctuationThenHebrew = /[\p{Script=Latin}\d]\u200f?\p{P}+[ \t]*$/u.test(value) && /^[ \t]*[\u05d0-\u05ea]/u.test(following) ||
+        /[\p{Script=Latin}\d]\u200f?\p{P}+[ \t]*[\u05d0-\u05ea]/u.test(value);
       // A purely textual inline-block isolates English plus its punctuation,
       // keeping the punctuation on the English side. Let that text participate
       // in the RTL line when Hebrew follows; retain atomic English-English runs.
       const display = getComputedStyle(inline).display;
-      const flow = hebrew && (display === "inline-block" || inline.getAttribute("data-rightly-prose-inline") === "flow") && punctuationThenHebrew &&
+      const wasFlow = inline.getAttribute("data-rightly-prose-inline") === "flow";
+      const flow = hebrew && (display === "inline-block" || wasFlow) && punctuationThenHebrew &&
         !inline.querySelector("img, svg, button, input, textarea, select, video, audio, code, pre, .katex, mjx-container, math");
-      const normalize = hebrew && (display === "inline" || flow);
+      const normalize = hebrew && (flow || (!wasFlow && display === "inline"));
       if (normalize) {
         const mode = flow ? "flow" : "";
         if (inline.getAttribute("data-rightly-prose-inline") !== mode) inline.setAttribute("data-rightly-prose-inline", mode);
@@ -129,26 +130,55 @@
         if (!inline.hasAttribute("data-rightly-prose-gap")) inline.setAttribute("data-rightly-prose-gap", "");
       } else inline.removeAttribute("data-rightly-prose-gap");
     }
+    function followingText(node) {
+      let next = node;
+      while (next && next !== element) {
+        if (next.nextSibling) {
+          next = next.nextSibling;
+          if (next.nodeType === Node.COMMENT_NODE) continue;
+          if (next.nodeType === Node.TEXT_NODE) return next.data;
+          if (next.matches(`br, ${CODE_OR_MATH}, ${SHELL}, a, bdi, bdo, [contenteditable]`)) return "";
+          return next.textContent || "";
+        }
+        next = next.parentNode;
+      }
+      return "";
+    }
     const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
     for (let node = walker.nextNode(); node; node = walker.nextNode()) {
       const parent = node.parentElement;
       if (parent.closest(TARGETS) !== element || parent.closest(`${CODE_OR_MATH}, ${SHELL}, a, bdi, bdo, [contenteditable]`)) continue;
       const value = node.data;
       const previous = proseArrows.get(node);
-      if (!previous && !/[←→⇐⇒⟵⟶⟸⟹]/u.test(value)) continue;
+      if (!previous && !/[←→⇐⇒⟵⟶⟸⟹\p{P}]/u.test(value)) continue;
       let source = value;
       if (previous) {
         // Recover the unchanged portions of the original text when streaming
-        // appends tokens to our displayed string. Every arrow is one code unit.
+        // appends tokens to our displayed string. Arrow glyphs have the same
+        // width; only marks inserted by us change character offsets.
         let prefix = 0, suffix = 0;
         while (prefix < value.length && prefix < previous.output.length && value[prefix] === previous.output[prefix]) prefix++;
         while (suffix < value.length - prefix && suffix < previous.output.length - prefix &&
           value[value.length - suffix - 1] === previous.output[previous.output.length - suffix - 1]) suffix++;
-        source = previous.source.slice(0, prefix) + value.slice(prefix, value.length - suffix) +
-          previous.source.slice(previous.source.length - suffix);
+        const sourceOffset = offset => offset - (previous.inserted || []).filter(position => position < offset).length;
+        source = previous.source.slice(0, sourceOffset(prefix)) + value.slice(prefix, value.length - suffix) +
+          previous.source.slice(sourceOffset(previous.output.length - suffix));
       }
-      const output = hebrew ? source.replace(/[←→⇐⇒⟵⟶⟸⟹]/gu, arrow => ARROWS.get(arrow)) : source;
-      proseArrows.set(node, { source, output });
+      let marked = "";
+      const inserted = [];
+      const afterNode = followingText(node);
+      for (let index = 0; index < source.length; index++) {
+        if (hebrew && index > 0 && /[\p{Script=Latin}\d]/u.test(source[index - 1]) && /\p{P}/u.test(source[index])) {
+          const next = (source.slice(index).replace(/^[\p{P}\s]+/u, "") + afterNode).trimStart();
+          if (HEBREW.test(next[0] || "") || !next) {
+            inserted.push(marked.length);
+            marked += "\u200f";
+          }
+        }
+        marked += source[index];
+      }
+      const output = hebrew ? marked.replace(/[←→⇐⇒⟵⟶⟸⟹]/gu, arrow => ARROWS.get(arrow)) : marked;
+      proseArrows.set(node, { source, output, inserted });
       if (output !== value) node.data = output;
     }
   }
@@ -222,5 +252,5 @@
       if (e.target instanceof Element && e.target.matches(INPUT)) enqueue(e.target);
     }, true);
   }
-  document.documentElement.setAttribute("data-rightly-chatgpt-version", "1.0.10");
+  document.documentElement.setAttribute("data-rightly-chatgpt-version", "1.0.11");
 })();
