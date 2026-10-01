@@ -55,6 +55,8 @@ fs.mkdirSync(output, { recursive: true });
     ["conditional-reverse", String.raw`P(\text{בדיקה חיובית}\mid\text{מחלה})`],
     ["probability-event", String.raw`P(\text{בדיקה חיובית})`],
     ["probability-left-right", String.raw`P\left(\text{בדיקה חיובית}\mid\text{מחלה}\right)`],
+    ["probability-one-word", String.raw`P(\text{גשם})=0.7`],
+    ["probability-two-words", String.raw`P(\text{אין גשם})=0.3`],
     ["change", String.raw`\boxed{\text{שינוי כולל}\approx\text{השפעת התזוזה בציר הראשון}+\text{השפעת התזוזה בציר השני}}`],
     ["arrow", String.raw`S\xrightarrow{\text{אלגוריתם אימון}}\mathbf{w}`],
     ["english-arrow", String.raw`\text{Simple model}\Rightarrow\text{high Bias, low Variance}`],
@@ -232,6 +234,20 @@ fs.mkdirSync(output, { recursive: true });
     assert.ok(eventOrder.every(Boolean) && eventOrder.every((rect, index) => !index || eventOrder[index - 1].right <= rect.left + 1),
       "P(Hebrew event) must retain its mathematical parenthesis order");
     checks++;
+    for (const [id, value] of [["probability-one-word", "0.7"], ["probability-two-words", "0.3"]]) {
+      const positions = await page.locator(`#${id} .katex-html`).evaluate((el, value) => {
+        const nodes = [el.querySelector(".mathnormal"), el.querySelector(".mopen"),
+          el.querySelector('[data-rightly-math-text="rtl"]'), el.querySelector(".mclose"),
+          [...el.querySelectorAll(".mrel")].find(node => node.textContent === "="),
+          [...el.querySelectorAll(".mord")].find(node => node.textContent === value)];
+        return nodes.map(node => node?.getBoundingClientRect()).map(rect => rect && ({ left: rect.left, right: rect.right }));
+      }, value);
+      assert.ok(positions.every(Boolean) && positions.every((rect, index) => !index || positions[index - 1].right <= rect.left + 1),
+        `${id}: P(Hebrew event) = ${value} must keep the same LTR mathematical order: ${JSON.stringify(positions)}`);
+      assert.equal(await page.locator(`#${id} [data-rightly-math-flow]`).count(), 0);
+      checks++;
+    }
+    await page.locator("#probability-two-words").screenshot({ path: path.join(output, "probability-two-words-after.png") });
     await page.locator("#p-low").screenshot({ path: path.join(output, "p-value-hebrew-after.png") });
     await page.locator("#conditional-probability").screenshot({ path: path.join(output, "conditional-probability-after.png") });
     assert.equal(await page.locator("body").textContent(), expectedText, "Only replace displayed Hebrew sentence arrows; preserve all other text and MathML");

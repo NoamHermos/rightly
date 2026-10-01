@@ -136,10 +136,22 @@
     return true;
   }
 
-  function isProbabilityCall(source) {
-    // Hebrew labels inside P(event) or P(event | condition) are arguments of
-    // an LTR math function, not consecutive words in a Hebrew sentence.
-    return /^\s*P\s*(?:\\left\s*)?\([\s\S]*(?:\\right\s*)?\)\s*$/u.test(source);
+  function isProbabilityExpression(source) {
+    // P(event)=value and P(event | condition) stay mathematical even when an
+    // event name has multiple Hebrew words. Only Hebrew inside parentheses
+    // qualifies; an explanatory Hebrew phrase after the call is still prose.
+    if (!/^\s*P\s*(?:\\left\s*)?\(/u.test(source)) return false;
+    let depth = 0, hasHebrew = false;
+    for (const char of source) {
+      if (char === "(") depth++;
+      else if (char === ")") depth--;
+      else if (HEBREW.test(char)) {
+        if (depth <= 0) return false;
+        hasHebrew = true;
+      }
+      if (depth < 0) return false;
+    }
+    return hasHebrew && depth === 0;
   }
 
   function markTextDirection(html, source) {
@@ -151,7 +163,7 @@
       }
       else text.removeAttribute("data-rightly-math-text");
     }
-    if (arrangeTrailingHebrewLabel(html, source) || isProbabilityCall(source)) return;
+    if (arrangeTrailingHebrewLabel(html, source) || isProbabilityExpression(source)) return;
     for (const parent of parents) {
       arrangeSentence(parent, [...parent.children], part => part.matches('[data-rightly-math-text="rtl"]'));
     }
