@@ -137,11 +137,12 @@
   }
 
   function isParenthesizedHebrewMathExpression(source) {
-    // Probability calls and assignments of parenthesized data (D=(...)) keep
-    // their mathematical LTR order even when their labels contain many Hebrew
-    // words. Explanatory Hebrew outside the parentheses remains RTL prose.
-    const probability = /^\s*P\s*(?:\\left\s*)?\(/u.test(source);
-    const tuple = /^\s*[A-Za-z][A-Za-z0-9_{}]*\s*=\s*(?:\\left\s*)?\(/u.test(source);
+    // Probability calls (including theta*=P(event)) and parenthesized data
+    // assignments keep mathematical LTR order inside and outside \boxed{...}.
+    // An explanatory Hebrew phrase outside the parentheses remains RTL prose.
+    const expression = source.replace(/^\s*(?:\\displaystyle\s*)?(?:\\boxed\s*\{\s*)?/u, "");
+    const probability = /(?:^|=)\s*P\s*(?:\\left\s*)?\(/u.test(expression);
+    const tuple = /^\s*[A-Za-z][A-Za-z0-9_{}]*\s*=\s*(?:\\left\s*)?\(/u.test(expression);
     if (!probability && !tuple) return false;
     let depth = 0, hasHebrew = false;
     for (const char of source) {

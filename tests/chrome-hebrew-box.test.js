@@ -57,8 +57,11 @@ fs.mkdirSync(output, { recursive: true });
     ["probability-left-right", String.raw`P\left(\text{בדיקה חיובית}\mid\text{מחלה}\right)`],
     ["probability-one-word", String.raw`P(\text{גשם})=0.7`],
     ["probability-two-words", String.raw`P(\text{אין גשם})=0.3`],
-    ["hebrew-data-tuple", String.raw`D=(\text{איחור},\text{איחור},\text{איחור},\text{לא איחור})`],
-    ["hebrew-data-tuple-left-right", String.raw`D=\left(\text{איחור},\text{איחור},\text{איחור},\text{לא איחור}\right)`],
+    ["boxed-theta-probability", String.raw`\boxed{\theta^*=P(\text{האוטובוס יאחר})}`],
+    ["boxed-probability-two-words", String.raw`\boxed{P(\text{אין גשם})=0.3}`],
+    ["hebrew-data-tuple", String.raw`D=(\text{איחר},\text{איחר},\text{איחר},\text{לא איחר})`],
+    ["hebrew-data-tuple-left-right", String.raw`D=\left(\text{איחר},\text{איחר},\text{איחר},\text{לא איחר}\right)`],
+    ["boxed-hebrew-data-tuple", String.raw`\boxed{D=(\text{איחר},\text{איחר},\text{איחר},\text{לא איחר})}`],
     ["change", String.raw`\boxed{\text{שינוי כולל}\approx\text{השפעת התזוזה בציר הראשון}+\text{השפעת התזוזה בציר השני}}`],
     ["arrow", String.raw`S\xrightarrow{\text{אלגוריתם אימון}}\mathbf{w}`],
     ["english-arrow", String.raw`\text{Simple model}\Rightarrow\text{high Bias, low Variance}`],
@@ -236,7 +239,8 @@ fs.mkdirSync(output, { recursive: true });
     assert.ok(eventOrder.every(Boolean) && eventOrder.every((rect, index) => !index || eventOrder[index - 1].right <= rect.left + 1),
       "P(Hebrew event) must retain its mathematical parenthesis order");
     checks++;
-    for (const [id, value] of [["probability-one-word", "0.7"], ["probability-two-words", "0.3"]]) {
+    for (const [id, value] of [["probability-one-word", "0.7"], ["probability-two-words", "0.3"],
+      ["boxed-probability-two-words", "0.3"]]) {
       const positions = await page.locator(`#${id} .katex-html`).evaluate((el, value) => {
         const nodes = [el.querySelector(".mathnormal"), el.querySelector(".mopen"),
           el.querySelector('[data-rightly-math-text="rtl"]'), el.querySelector(".mclose"),
@@ -250,7 +254,18 @@ fs.mkdirSync(output, { recursive: true });
       checks++;
     }
     await page.locator("#probability-two-words").screenshot({ path: path.join(output, "probability-two-words-after.png") });
-    for (const id of ["hebrew-data-tuple", "hebrew-data-tuple-left-right"]) {
+    const thetaProbability = await page.locator("#boxed-theta-probability .katex-html").evaluate(el => {
+      const nodes = [el.querySelector(".mathnormal"), el.querySelector(".mrel"),
+        [...el.querySelectorAll(".mathnormal")].at(-1), el.querySelector(".mopen"),
+        el.querySelector('[data-rightly-math-text="rtl"]'), el.querySelector(".mclose")];
+      return nodes.map(node => node?.getBoundingClientRect()).map(rect => rect && ({ left: rect.left, right: rect.right }));
+    });
+    assert.ok(thetaProbability.every(Boolean) && thetaProbability.every((rect, index) => !index || thetaProbability[index - 1].right <= rect.left + 1),
+      `boxed-theta-probability: theta*=P(Hebrew event) must stay mathematical LTR: ${JSON.stringify(thetaProbability)}`);
+    assert.equal(await page.locator("#boxed-theta-probability [data-rightly-math-flow]").count(), 0);
+    checks++;
+    await page.locator("#boxed-theta-probability").screenshot({ path: path.join(output, "boxed-theta-probability-after.png") });
+    for (const id of ["hebrew-data-tuple", "hebrew-data-tuple-left-right", "boxed-hebrew-data-tuple"]) {
       const positions = await page.locator(`#${id} .katex-html`).evaluate(el => {
         const nodes = [el.querySelector(".mathnormal"), el.querySelector(".mrel"),
           el.querySelector(".mopen"), ...el.querySelectorAll('[data-rightly-math-text="rtl"]'),
