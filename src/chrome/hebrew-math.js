@@ -136,11 +136,13 @@
     return true;
   }
 
-  function isProbabilityExpression(source) {
-    // P(event)=value and P(event | condition) stay mathematical even when an
-    // event name has multiple Hebrew words. Only Hebrew inside parentheses
-    // qualifies; an explanatory Hebrew phrase after the call is still prose.
-    if (!/^\s*P\s*(?:\\left\s*)?\(/u.test(source)) return false;
+  function isParenthesizedHebrewMathExpression(source) {
+    // Probability calls and assignments of parenthesized data (D=(...)) keep
+    // their mathematical LTR order even when their labels contain many Hebrew
+    // words. Explanatory Hebrew outside the parentheses remains RTL prose.
+    const probability = /^\s*P\s*(?:\\left\s*)?\(/u.test(source);
+    const tuple = /^\s*[A-Za-z][A-Za-z0-9_{}]*\s*=\s*(?:\\left\s*)?\(/u.test(source);
+    if (!probability && !tuple) return false;
     let depth = 0, hasHebrew = false;
     for (const char of source) {
       if (char === "(") depth++;
@@ -163,7 +165,7 @@
       }
       else text.removeAttribute("data-rightly-math-text");
     }
-    if (arrangeTrailingHebrewLabel(html, source) || isProbabilityExpression(source)) return;
+    if (arrangeTrailingHebrewLabel(html, source) || isParenthesizedHebrewMathExpression(source)) return;
     for (const parent of parents) {
       arrangeSentence(parent, [...parent.children], part => part.matches('[data-rightly-math-text="rtl"]'));
     }
