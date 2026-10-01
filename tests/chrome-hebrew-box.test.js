@@ -48,6 +48,13 @@ fs.mkdirSync(output, { recursive: true });
     ["boxed-map", String.raw`\boxed{MAP = \text{מה הכי סביר אחרי הנתונים}}`],
     ["boxed-gradient-equation", String.raw`\boxed{-\nabla f = \text{כיוון הירידה המהירה ביותר}}`],
     ["boxed-math-definition", String.raw`\boxed{MLE=A+B=\text{מה הכי מסביר את הנתונים}}`],
+    ["p-low", String.raw`p=0.4 \quad \text{קצת סביר}`],
+    ["p-mid", String.raw`p=0.5 \quad \text{סביר}`],
+    ["p-high", String.raw`p=0.7 \quad \text{מאוד סביר}`],
+    ["conditional-probability", String.raw`P(\text{מחלה}\mid\text{בדיקה חיובית})`],
+    ["conditional-reverse", String.raw`P(\text{בדיקה חיובית}\mid\text{מחלה})`],
+    ["probability-event", String.raw`P(\text{בדיקה חיובית})`],
+    ["probability-left-right", String.raw`P\left(\text{בדיקה חיובית}\mid\text{מחלה}\right)`],
     ["change", String.raw`\boxed{\text{שינוי כולל}\approx\text{השפעת התזוזה בציר הראשון}+\text{השפעת התזוזה בציר השני}}`],
     ["arrow", String.raw`S\xrightarrow{\text{אלגוריתם אימון}}\mathbf{w}`],
     ["english-arrow", String.raw`\text{Simple model}\Rightarrow\text{high Bias, low Variance}`],
@@ -187,6 +194,46 @@ fs.mkdirSync(output, { recursive: true });
       el.querySelector(".mathnormal").getBoundingClientRect().right < el.querySelector(".text").getBoundingClientRect().left);
     assert.equal(algebraOrder, true, "A single Hebrew label must preserve the surrounding algebra order");
     checks += 2;
+    for (const [id, value] of [["p-low", "0.4"], ["p-mid", "0.5"], ["p-high", "0.7"]]) {
+      const positions = await page.locator(`#${id} .katex-html`).evaluate((el, value) => {
+        const math = el.querySelector('[data-rightly-math-part="ltr"]');
+        const symbol = [...math?.querySelectorAll(".mathnormal") || []].find(node => node.textContent === "p");
+        const equals = [...math?.querySelectorAll(".mrel") || []].find(node => node.textContent === "=");
+        const number = [...math?.querySelectorAll(".mord") || []].find(node => node.textContent === value);
+        const label = el.querySelector('[data-rightly-math-text="rtl"]');
+        return [symbol, equals, number, label].map(node => node?.getBoundingClientRect()).map(rect => rect && ({ left: rect.left, right: rect.right }));
+      }, value);
+      assert.ok(positions.every(Boolean), `${id}: all formula parts remain present`);
+      assert.ok(positions[0].right <= positions[1].left + 1 &&
+        positions[1].right <= positions[2].left + 1 &&
+        positions[3].right <= positions[0].left + 1,
+        `${id}: p = ${value} must stay together to the right of the Hebrew label: ${JSON.stringify(positions)}`);
+      checks++;
+    }
+    for (const id of ["conditional-probability", "conditional-reverse", "probability-left-right"]) {
+      const positions = await page.locator(`#${id} .katex-html`).evaluate(el => {
+        const nodes = [el.querySelector(".mathnormal"), el.querySelector(".mopen"),
+          ...el.querySelectorAll('[data-rightly-math-text="rtl"]'),
+          el.querySelector(".mrel"), el.querySelector(".mclose")];
+        const ordered = [nodes[0], nodes[1], nodes[2], nodes[4], nodes[3], nodes[5]];
+        return ordered.map(node => node?.getBoundingClientRect()).map(rect => rect && ({ left: rect.left, right: rect.right }));
+      });
+      assert.ok(positions.every(Boolean), `${id}: probability notation remains intact`);
+      assert.ok(positions.every((rect, index) => !index || positions[index - 1].right <= rect.left + 1),
+        `${id}: P(event | condition) must keep its LTR mathematical order: ${JSON.stringify(positions)}`);
+      assert.equal(await page.locator(`#${id} [data-rightly-math-flow]`).count(), 0,
+        `${id}: do not reverse a conditional probability into an RTL sentence`);
+      checks++;
+    }
+    const eventOrder = await page.locator("#probability-event .katex-html").evaluate(el =>
+      [el.querySelector(".mathnormal"), el.querySelector(".mopen"),
+        el.querySelector('[data-rightly-math-text="rtl"]'), el.querySelector(".mclose")]
+        .map(node => node?.getBoundingClientRect()).map(rect => rect && ({ left: rect.left, right: rect.right })));
+    assert.ok(eventOrder.every(Boolean) && eventOrder.every((rect, index) => !index || eventOrder[index - 1].right <= rect.left + 1),
+      "P(Hebrew event) must retain its mathematical parenthesis order");
+    checks++;
+    await page.locator("#p-low").screenshot({ path: path.join(output, "p-value-hebrew-after.png") });
+    await page.locator("#conditional-probability").screenshot({ path: path.join(output, "conditional-probability-after.png") });
     assert.equal(await page.locator("body").textContent(), expectedText, "Only replace displayed Hebrew sentence arrows; preserve all other text and MathML");
     for (const id of ["english", "fraction"]) {
       assert.equal(await page.locator(`#${id} .katex-html`).innerHTML(), preserved[id], `${id}: preserve mathematical and English boxes`);

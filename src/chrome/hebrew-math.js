@@ -113,7 +113,36 @@
     parent.replaceChildren(flow);
   }
 
-  function markTextDirection(html) {
+  function arrangeTrailingHebrewLabel(html, source) {
+    // A math value followed by \quad\text{Hebrew} is one LTR expression plus
+    // an RTL caption. KaTeX may split p=0.4 across two .base spans; moving
+    // those bases independently separates p, = and its value.
+    if (!/\\(?:quad|qquad)\s*\\text\{/u.test(source)) return false;
+    const bases = [...html.children];
+    if (!bases.length || !bases.every(base => base.matches(".base"))) return false;
+    const lastBase = bases[bases.length - 1];
+    const label = lastBase.lastElementChild;
+    const spacing = label?.previousElementSibling;
+    if (!label?.matches('.text[data-rightly-math-text="rtl"]') ||
+        !spacing?.matches(".mspace") || !["1em", "2em"].includes(spacing.style.marginRight) ||
+        html.querySelectorAll('[data-rightly-math-text="rtl"]').length !== 1) return false;
+    const flow = document.createElement("span");
+    flow.setAttribute("data-rightly-math-flow", "rtl");
+    const math = document.createElement("span");
+    math.setAttribute("data-rightly-math-part", "ltr");
+    for (const base of bases) math.append(base);
+    flow.append(math, spacing, label);
+    html.replaceChildren(flow);
+    return true;
+  }
+
+  function isProbabilityCall(source) {
+    // Hebrew labels inside P(event) or P(event | condition) are arguments of
+    // an LTR math function, not consecutive words in a Hebrew sentence.
+    return /^\s*P\s*(?:\\left\s*)?\([\s\S]*(?:\\right\s*)?\)\s*$/u.test(source);
+  }
+
+  function markTextDirection(html, source) {
     const parents = new Set();
     for (const text of html.querySelectorAll(".text")) {
       if (HEBREW.test(text.textContent || "")) {
@@ -122,6 +151,7 @@
       }
       else text.removeAttribute("data-rightly-math-text");
     }
+    if (arrangeTrailingHebrewLabel(html, source) || isProbabilityCall(source)) return;
     for (const parent of parents) {
       arrangeSentence(parent, [...parent.children], part => part.matches('[data-rightly-math-text="rtl"]'));
     }
@@ -163,7 +193,7 @@
       template.innerHTML = rendered;
       const replacement = template.content.querySelector(".katex-html");
       if (!replacement) return;
-      markTextDirection(replacement);
+      markTextDirection(replacement, source);
       // Inner KaTeX markup is generated presentation, not an editor. Preserve
       // the existing formula root, accessible MathML, TeX source and controls.
       if (html.innerHTML !== replacement.innerHTML) html.innerHTML = replacement.innerHTML;
@@ -171,7 +201,7 @@
       processed.set(formula, { key, html: html.innerHTML });
     } catch {
       // Site-specific macros or unsupported commands keep their original math.
-      markTextDirection(html);
+      markTextDirection(html, source);
       processed.set(formula, { key, html: html.innerHTML });
     }
   }
