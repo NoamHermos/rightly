@@ -136,25 +136,30 @@
     return true;
   }
 
-  function isParenthesizedHebrewMathExpression(source) {
-    // Probability calls (including theta*=P(event)) and parenthesized data
-    // assignments keep mathematical LTR order inside and outside \boxed{...}.
-    // An explanatory Hebrew phrase outside the parentheses remains RTL prose.
+  function isDelimitedHebrewMathExpression(source) {
+    // Probability calls, data tuples and set assignments keep mathematical LTR
+    // order inside and outside \boxed{...}. Visible braces are \{ or \lbrace;
+    // ordinary TeX grouping braces in \text{...} are not visible delimiters.
+    // Hebrew outside the visible delimiters remains explanatory RTL prose.
     const expression = source.replace(/^\s*(?:\\displaystyle\s*)?(?:\\boxed\s*\{\s*)?/u, "");
     const probability = /(?:^|=)\s*P\s*(?:\\left\s*)?\(/u.test(expression);
-    const tuple = /^\s*[A-Za-z][A-Za-z0-9_{}]*\s*=\s*(?:\\left\s*)?\(/u.test(expression);
-    if (!probability && !tuple) return false;
-    let depth = 0, hasHebrew = false;
-    for (const char of source) {
-      if (char === "(") depth++;
-      else if (char === ")") depth--;
-      else if (HEBREW.test(char)) {
-        if (depth <= 0) return false;
+    const assignment = /^\s*[A-Za-z][A-Za-z0-9_{}]*\s*=\s*(?:\\(?:left|bigl|Bigl|biggl|Biggl)\s*)?(?:\(|\\\{|\\lbrace\b)/u.test(expression);
+    if (!probability && !assignment) return false;
+    const delimiters = [];
+    let hasHebrew = false;
+    // Consume whole control sequences so escaped symbols cannot be mistaken
+    // for a grouping brace; enforce matching types for nested sets/tuples.
+    for (const [token] of source.matchAll(/\\(?:[A-Za-z]+|[^\r\n])|[()]|[\u05d0-\u05ea\u05ef-\u05f2\ufb1d-\ufb4f]/gu)) {
+      if (token === "(") delimiters.push(")");
+      else if (token === "\\{" || token === "\\lbrace") delimiters.push("}");
+      else if (token === ")" || token === "\\}" || token === "\\rbrace") {
+        if (delimiters.pop() !== (token === ")" ? ")" : "}")) return false;
+      } else if (HEBREW.test(token)) {
+        if (!delimiters.length) return false;
         hasHebrew = true;
       }
-      if (depth < 0) return false;
     }
-    return hasHebrew && depth === 0;
+    return hasHebrew && delimiters.length === 0;
   }
 
   function markTextDirection(html, source) {
@@ -166,7 +171,7 @@
       }
       else text.removeAttribute("data-rightly-math-text");
     }
-    if (arrangeTrailingHebrewLabel(html, source) || isParenthesizedHebrewMathExpression(source)) return;
+    if (arrangeTrailingHebrewLabel(html, source) || isDelimitedHebrewMathExpression(source)) return;
     for (const parent of parents) {
       arrangeSentence(parent, [...parent.children], part => part.matches('[data-rightly-math-text="rtl"]'));
     }

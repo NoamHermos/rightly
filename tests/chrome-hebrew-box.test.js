@@ -62,6 +62,14 @@ fs.mkdirSync(output, { recursive: true });
     ["hebrew-data-tuple", String.raw`D=(\text{איחר},\text{איחר},\text{איחר},\text{לא איחר})`],
     ["hebrew-data-tuple-left-right", String.raw`D=\left(\text{איחר},\text{איחר},\text{איחר},\text{לא איחר}\right)`],
     ["boxed-hebrew-data-tuple", String.raw`\boxed{D=(\text{איחר},\text{איחר},\text{איחר},\text{לא איחר})}`],
+    ["hebrew-set-rain", String.raw`A=\{\text{ירד גשם היום}\}`],
+    ["hebrew-set-bus", String.raw`B=\{\text{האוטובוס יאחר}\}`],
+    ["hebrew-set-left-right", String.raw`A=\left\{\text{ירד גשם היום}\right\}`],
+    ["hebrew-set-lbrace", String.raw`B=\lbrace\text{האוטובוס יאחר}\rbrace`],
+    ["hebrew-set-sized", String.raw`A=\bigl\{\text{ירד גשם היום}\bigr\}`],
+    ["boxed-hebrew-set", String.raw`\boxed{A=\{\text{ירד גשם היום}\}}`],
+    ["hebrew-set-nested", String.raw`A=\{(\text{ירד גשם היום},\text{האוטובוס יאחר})\}`],
+    ["hebrew-set-caption", String.raw`A=\{\text{ירד גשם היום}\}\quad\text{הגדרת מאורע}`],
     ["change", String.raw`\boxed{\text{שינוי כולל}\approx\text{השפעת התזוזה בציר הראשון}+\text{השפעת התזוזה בציר השני}}`],
     ["arrow", String.raw`S\xrightarrow{\text{אלגוריתם אימון}}\mathbf{w}`],
     ["english-arrow", String.raw`\text{Simple model}\Rightarrow\text{high Bias, low Variance}`],
@@ -265,7 +273,8 @@ fs.mkdirSync(output, { recursive: true });
     assert.equal(await page.locator("#boxed-theta-probability [data-rightly-math-flow]").count(), 0);
     checks++;
     await page.locator("#boxed-theta-probability").screenshot({ path: path.join(output, "boxed-theta-probability-after.png") });
-    for (const id of ["hebrew-data-tuple", "hebrew-data-tuple-left-right", "boxed-hebrew-data-tuple"]) {
+    for (const id of ["hebrew-data-tuple", "hebrew-data-tuple-left-right", "boxed-hebrew-data-tuple",
+      "hebrew-set-rain", "hebrew-set-bus", "hebrew-set-left-right", "hebrew-set-lbrace", "hebrew-set-sized", "boxed-hebrew-set"]) {
       const positions = await page.locator(`#${id} .katex-html`).evaluate(el => {
         const nodes = [el.querySelector(".mathnormal"), el.querySelector(".mrel"),
           el.querySelector(".mopen"), ...el.querySelectorAll('[data-rightly-math-text="rtl"]'),
@@ -273,15 +282,22 @@ fs.mkdirSync(output, { recursive: true });
         return nodes.map(node => node?.getBoundingClientRect()).map(rect => rect && ({ left: rect.left, right: rect.right }));
       });
       assert.ok(positions.every(Boolean) && positions.every((rect, index) => !index || positions[index - 1].right <= rect.left + 1),
-        `${id}: D=(Hebrew labels) must keep the tuple in mathematical order: ${JSON.stringify(positions)}`);
+        `${id}: the assignment and delimited Hebrew labels must keep mathematical order: ${JSON.stringify(positions)}`);
       assert.equal(await page.locator(`#${id} [data-rightly-math-flow]`).count(), 0,
-        `${id}: a mathematical tuple must not be rearranged like prose`);
+        `${id}: a mathematical tuple or set must not be rearranged like prose`);
       checks++;
     }
     await page.locator("#hebrew-data-tuple").screenshot({ path: path.join(output, "hebrew-data-tuple-after.png") });
     await page.locator("#p-low").screenshot({ path: path.join(output, "p-value-hebrew-after.png") });
     await page.locator("#conditional-probability").screenshot({ path: path.join(output, "conditional-probability-after.png") });
     assert.equal(await page.locator("body").textContent(), expectedText, "Only replace displayed Hebrew sentence arrows; preserve all other text and MathML");
+    assert.equal(await page.locator('#hebrew-set-nested [data-rightly-math-flow]').count(), 0,
+      "Nested parentheses inside set braces retain mathematical order");
+    assert.ok(await page.locator('#hebrew-set-caption [data-rightly-math-flow="rtl"]').count() > 0,
+      "Hebrew outside visible braces remains explanatory prose, not part of the set");
+    checks += 2;
+    await page.locator("#hebrew-set-rain").screenshot({ path: path.join(output, "hebrew-set-rain-after.png") });
+    await page.locator("#hebrew-set-bus").screenshot({ path: path.join(output, "hebrew-set-bus-after.png") });
     for (const id of ["english", "fraction"]) {
       assert.equal(await page.locator(`#${id} .katex-html`).innerHTML(), preserved[id], `${id}: preserve mathematical and English boxes`);
       assert.equal(await page.locator(`#${id} [data-rightly-hebrew-math]`).count(), 0);
