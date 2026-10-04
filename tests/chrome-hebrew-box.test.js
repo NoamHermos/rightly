@@ -68,6 +68,8 @@ fs.mkdirSync(output, { recursive: true });
     ["hebrew-set-lbrace", String.raw`B=\lbrace\text{האוטובוס יאחר}\rbrace`],
     ["hebrew-set-sized", String.raw`A=\bigl\{\text{ירד גשם היום}\bigr\}`],
     ["boxed-hebrew-set", String.raw`\boxed{A=\{\text{ירד גשם היום}\}}`],
+    ["hebrew-set-mathcal", String.raw`\mathcal{H}=\{\text{כל הישרים האפשריים במישור}\}`],
+    ["hebrew-set-mathcal-left-right", String.raw`\mathcal H=\left\{\text{כל הישרים האפשריים במישור}\right\}`],
     ["hebrew-set-nested", String.raw`A=\{(\text{ירד גשם היום},\text{האוטובוס יאחר})\}`],
     ["hebrew-set-caption", String.raw`A=\{\text{ירד גשם היום}\}\quad\text{הגדרת מאורע}`],
     ["change", String.raw`\boxed{\text{שינוי כולל}\approx\text{השפעת התזוזה בציר הראשון}+\text{השפעת התזוזה בציר השני}}`],
@@ -288,6 +290,19 @@ fs.mkdirSync(output, { recursive: true });
       checks++;
     }
     await page.locator("#hebrew-data-tuple").screenshot({ path: path.join(output, "hebrew-data-tuple-after.png") });
+    for (const id of ["hebrew-set-mathcal", "hebrew-set-mathcal-left-right"]) {
+      const positions = await page.locator(`#${id} .katex-html`).evaluate(el => {
+        const nodes = [el.querySelector(".mathcal"), el.querySelector(".mrel"),
+          el.querySelector(".mopen"), el.querySelector('[data-rightly-math-text="rtl"]'),
+          el.querySelector(".mclose")];
+        return nodes.map(node => node?.getBoundingClientRect()).map(rect => rect && ({ left: rect.left, right: rect.right }));
+      });
+      assert.ok(positions.every(Boolean) && positions.every((rect, index) => !index || positions[index - 1].right <= rect.left + 1),
+        `${id}: calligraphic H and Hebrew set braces must keep mathematical LTR order: ${JSON.stringify(positions)}`);
+      assert.equal(await page.locator(`#${id} [data-rightly-math-flow]`).count(), 0);
+      checks++;
+    }
+    await page.locator("#hebrew-set-mathcal").screenshot({ path: path.join(output, "hebrew-set-mathcal-after.png") });
     await page.locator("#p-low").screenshot({ path: path.join(output, "p-value-hebrew-after.png") });
     await page.locator("#conditional-probability").screenshot({ path: path.join(output, "conditional-probability-after.png") });
     assert.equal(await page.locator("body").textContent(), expectedText, "Only replace displayed Hebrew sentence arrows; preserve all other text and MathML");

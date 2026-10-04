@@ -141,9 +141,16 @@
     // order inside and outside \boxed{...}. Visible braces are \{ or \lbrace;
     // ordinary TeX grouping braces in \text{...} are not visible delimiters.
     // Hebrew outside the visible delimiters remains explanatory RTL prose.
-    const expression = source.replace(/^\s*(?:\\displaystyle\s*)?(?:\\boxed\s*\{\s*)?/u, "");
+    const expression = source.replace(/^\s*(?:\\displaystyle\s*|\\boxed\s*\{\s*)*/u, "");
     const probability = /(?:^|=)\s*P\s*(?:\\left\s*)?\(/u.test(expression);
-    const assignment = /^\s*[A-Za-z][A-Za-z0-9_{}]*\s*=\s*(?:\\(?:left|bigl|Bigl|biggl|Biggl)\s*)?(?:\(|\\\{|\\lbrace\b)/u.test(expression);
+    const equals = expression.indexOf("=");
+    const subject = equals < 0 ? "" : expression.slice(0, equals).trim();
+    const value = equals < 0 ? "" : expression.slice(equals + 1);
+    // The subject may be a styled symbol such as \mathcal{H}, not only a
+    // Latin letter. Keep prose labels out of this mathematical exception.
+    const assignment = !!subject && !HEBREW.test(subject) &&
+      !/\\(?:text|mbox)\s*\{/u.test(subject) &&
+      /^\s*(?:\\(?:left|bigl|Bigl|biggl|Biggl)\s*)?(?:\(|\\\{|\\lbrace\b)/u.test(value);
     if (!probability && !assignment) return false;
     const delimiters = [];
     let hasHebrew = false;
