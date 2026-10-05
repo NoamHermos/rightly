@@ -70,6 +70,13 @@ fs.mkdirSync(output, { recursive: true });
     ["boxed-hebrew-set", String.raw`\boxed{A=\{\text{ירד גשם היום}\}}`],
     ["hebrew-set-mathcal", String.raw`\mathcal{H}=\{\text{כל הישרים האפשריים במישור}\}`],
     ["hebrew-set-mathcal-left-right", String.raw`\mathcal H=\left\{\text{כל הישרים האפשריים במישור}\right\}`],
+    ["hebrew-set-membership", String.raw`y\in\{\text{חתול},\text{כלב},\text{ציפור}\}`],
+    ["hebrew-set-membership-sized", String.raw`y\in\left\{\text{חתול},\text{כלב},\text{ציפור}\right\}`],
+    ["hebrew-set-nonmembership", String.raw`y\notin\{\text{חתול},\text{כלב},\text{ציפור}\}`],
+    ["hebrew-set-membership-unicode", String.raw`y∈\{\text{חתול},\text{כלב},\text{ציפור}\}`],
+    ["hebrew-set-nonmembership-unicode", String.raw`y∉\{\text{חתול},\text{כלב},\text{ציפור}\}`],
+    ["boxed-hebrew-set-membership", String.raw`\boxed{y\in\{\text{חתול},\text{כלב},\text{ציפור}\}}`],
+    ["hebrew-set-membership-caption", String.raw`y\in\{\text{חתול},\text{כלב},\text{ציפור}\}\quad\text{תוויות אפשריות}`],
     ["hebrew-set-nested", String.raw`A=\{(\text{ירד גשם היום},\text{האוטובוס יאחר})\}`],
     ["hebrew-set-caption", String.raw`A=\{\text{ירד גשם היום}\}\quad\text{הגדרת מאורע}`],
     ["change", String.raw`\boxed{\text{שינוי כולל}\approx\text{השפעת התזוזה בציר הראשון}+\text{השפעת התזוזה בציר השני}}`],
@@ -303,6 +310,31 @@ fs.mkdirSync(output, { recursive: true });
       checks++;
     }
     await page.locator("#hebrew-set-mathcal").screenshot({ path: path.join(output, "hebrew-set-mathcal-after.png") });
+    for (const id of ["hebrew-set-membership", "hebrew-set-membership-sized", "hebrew-set-nonmembership",
+      "hebrew-set-membership-unicode", "hebrew-set-nonmembership-unicode", "boxed-hebrew-set-membership"]) {
+      const positions = await page.locator(`#${id} .katex-html`).evaluate(el => {
+        // KaTeX draws \notin as an outer relation with nested ∈ and / glyphs.
+        const nodes = [...el.querySelectorAll('.mathnormal, .mrel, .mopen, [data-rightly-math-text="rtl"], .mpunct, .mclose')]
+          .filter(node => !node.parentElement.closest(".mrel"));
+        return nodes.map(node => {
+          const rect = node.getBoundingClientRect();
+          return { text: node.textContent, left: rect.left, right: rect.right };
+        });
+      });
+      assert.match(positions[1].text, id.includes("nonmembership") ? /^(?:∉|∈\/)$/u : /^∈$/u,
+        `${id}: retain the membership relation`);
+      assert.deepEqual(positions.map(rect => rect.text), ["y", positions[1].text,
+        "{", "חתול", ",", "כלב", ",", "ציפור", "}"], `${id}: retain every membership token`);
+      assert.ok(positions.every((rect, index) => !index || positions[index - 1].right <= rect.left + 1),
+        `${id}: variable, relation, braces and set members must stay in mathematical order: ${JSON.stringify(positions)}`);
+      assert.equal(await page.locator(`#${id} [data-rightly-math-flow]`).count(), 0,
+        `${id}: set membership must not be rearranged like a Hebrew sentence`);
+      checks++;
+    }
+    assert.ok(await page.locator('#hebrew-set-membership-caption [data-rightly-math-flow="rtl"]').count() > 0,
+      "Hebrew outside a membership set remains explanatory prose");
+    checks++;
+    await page.locator("#hebrew-set-membership").screenshot({ path: path.join(output, "hebrew-set-membership-after.png") });
     await page.locator("#p-low").screenshot({ path: path.join(output, "p-value-hebrew-after.png") });
     await page.locator("#conditional-probability").screenshot({ path: path.join(output, "conditional-probability-after.png") });
     assert.equal(await page.locator("body").textContent(), expectedText, "Only replace displayed Hebrew sentence arrows; preserve all other text and MathML");

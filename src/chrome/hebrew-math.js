@@ -137,21 +137,21 @@
   }
 
   function isDelimitedHebrewMathExpression(source) {
-    // Probability calls, data tuples and set assignments keep mathematical LTR
+    // Probability calls, data tuples, set assignments and membership keep LTR
     // order inside and outside \boxed{...}. Visible braces are \{ or \lbrace;
     // ordinary TeX grouping braces in \text{...} are not visible delimiters.
     // Hebrew outside the visible delimiters remains explanatory RTL prose.
     const expression = source.replace(/^\s*(?:\\displaystyle\s*|\\boxed\s*\{\s*)*/u, "");
     const probability = /(?:^|=)\s*P\s*(?:\\left\s*)?\(/u.test(expression);
-    const equals = expression.indexOf("=");
-    const subject = equals < 0 ? "" : expression.slice(0, equals).trim();
-    const value = equals < 0 ? "" : expression.slice(equals + 1);
+    const relation = expression.match(/=|\\(?:notin|in)\b|[∈∉]/u);
+    const subject = relation ? expression.slice(0, relation.index).trim() : "";
+    const value = relation ? expression.slice(relation.index + relation[0].length) : "";
     // The subject may be a styled symbol such as \mathcal{H}, not only a
     // Latin letter. Keep prose labels out of this mathematical exception.
-    const assignment = !!subject && !HEBREW.test(subject) &&
+    const delimitedValue = !!subject && !HEBREW.test(subject) &&
       !/\\(?:text|mbox)\s*\{/u.test(subject) &&
       /^\s*(?:\\(?:left|bigl|Bigl|biggl|Biggl)\s*)?(?:\(|\\\{|\\lbrace\b)/u.test(value);
-    if (!probability && !assignment) return false;
+    if (!probability && !delimitedValue) return false;
     const delimiters = [];
     let hasHebrew = false;
     // Consume whole control sequences so escaped symbols cannot be mistaken
