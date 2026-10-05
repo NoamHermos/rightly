@@ -59,6 +59,17 @@ fs.mkdirSync(output, { recursive: true });
     ["probability-two-words", String.raw`P(\text{אין גשם})=0.3`],
     ["boxed-theta-probability", String.raw`\boxed{\theta^*=P(\text{האוטובוס יאחר})}`],
     ["boxed-probability-two-words", String.raw`\boxed{P(\text{אין גשם})=0.3}`],
+    ["boxed-cross-entropy", String.raw`\boxed{
+\text{Cross-Entropy}
+=
+-\log(\text{probability שהמודל נתן למחלקה הנכונה})
+}`],
+    ["cross-entropy", String.raw`\text{Cross-Entropy}=-\log(\text{probability שהמודל נתן למחלקה הנכונה})`],
+    ["logarithm-sized", String.raw`-\log\left(\text{הסתברות המחלקה הנכונה}\right)`],
+    ["logarithm-base", String.raw`-\log_{10}(\text{הסתברות המחלקה הנכונה})`],
+    ["logarithm-base-digit", String.raw`-\log_2(\text{הסתברות המחלקה הנכונה})`],
+    ["natural-logarithm", String.raw`-\ln(\text{הסתברות המחלקה הנכונה})`],
+    ["logarithm-explanation", String.raw`-\log(x)=\text{הפסד לוגריתמי של המודל}`],
     ["hebrew-data-tuple", String.raw`D=(\text{איחר},\text{איחר},\text{איחר},\text{לא איחר})`],
     ["hebrew-data-tuple-left-right", String.raw`D=\left(\text{איחר},\text{איחר},\text{איחר},\text{לא איחר}\right)`],
     ["boxed-hebrew-data-tuple", String.raw`\boxed{D=(\text{איחר},\text{איחר},\text{איחר},\text{לא איחר})}`],
@@ -162,7 +173,7 @@ fs.mkdirSync(output, { recursive: true });
           fits: !outer || box.width <= outer.width,
           scrollable: getComputedStyle(el.closest(".katex")).overflowX === "auto",
           border: getComputedStyle(owner).borderTopWidth,
-          rtlText: textNodes.every(node => getComputedStyle(node).direction === "rtl"),
+          rtlText: textNodes.filter(node => /[א-ת]/u.test(node.textContent)).every(node => getComputedStyle(node).direction === "rtl"),
           originalBorderVisible: getComputedStyle(owner.parentElement).display !== "none"
         };
       });
@@ -282,6 +293,29 @@ fs.mkdirSync(output, { recursive: true });
     assert.equal(await page.locator("#boxed-theta-probability [data-rightly-math-flow]").count(), 0);
     checks++;
     await page.locator("#boxed-theta-probability").screenshot({ path: path.join(output, "boxed-theta-probability-after.png") });
+    for (const id of ["boxed-cross-entropy", "cross-entropy", "logarithm-sized", "logarithm-base", "logarithm-base-digit", "natural-logarithm"]) {
+      const positions = await page.locator(`#${id} .katex-html`).evaluate(el => {
+        const minus = [...el.querySelectorAll(".mord")].find(node => node.textContent === "−");
+        const nodes = [minus, el.querySelector(".mop"), el.querySelector(".mopen"),
+          el.querySelector('[data-rightly-math-text="rtl"]'), el.querySelector(".mclose")];
+        if (el.textContent.includes("Cross-Entropy")) nodes.unshift(
+          [...el.querySelectorAll(".text")].find(node => node.textContent === "Cross-Entropy"), el.querySelector(".mrel"));
+        return nodes.map(node => {
+          const rect = node?.getBoundingClientRect();
+          return rect && { text: node.textContent, left: rect.left, right: rect.right };
+        });
+      });
+      assert.ok(positions.every(Boolean) && positions.every((rect, index) => !index || positions[index - 1].right <= rect.left + 1),
+        `${id}: preserve the LTR logarithm, its argument and both parentheses: ${JSON.stringify(positions)}`);
+      assert.equal(await page.locator(`#${id} [data-rightly-math-flow]`).count(), 0,
+        `${id}: Hebrew inside a logarithm is an argument, not a separate RTL sentence`);
+      checks++;
+    }
+    await checkTextBox("boxed-cross-entropy");
+    assert.ok(await page.locator('#logarithm-explanation [data-rightly-math-flow="rtl"]').count() > 0,
+      "Hebrew outside a logarithm remains explanatory prose");
+    checks++;
+    await page.locator("#boxed-cross-entropy").screenshot({ path: path.join(output, "cross-entropy-after.png") });
     for (const id of ["hebrew-data-tuple", "hebrew-data-tuple-left-right", "boxed-hebrew-data-tuple",
       "hebrew-set-rain", "hebrew-set-bus", "hebrew-set-left-right", "hebrew-set-lbrace", "hebrew-set-sized", "boxed-hebrew-set"]) {
       const positions = await page.locator(`#${id} .katex-html`).evaluate(el => {

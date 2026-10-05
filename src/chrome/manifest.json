@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Rightly for ChatGPT",
-  "version": "1.0.19",
+  "version": "1.0.20",
   "description": "תיקון אוטומטי לכיוון וליישור עברית ב־ChatGPT, גם במשפטים שמתחילים במילה באנגלית.",
   "icons": {
     "16": "icons/icon16.png",
