@@ -120,7 +120,7 @@ Rightly installs a renderer payload tailored to each application. The payload fo
   directly own text are directioned, so buttons keep their order.
 - Bullets and numbered-list markers stay on the correct side.
 - Tables containing RTL text are centered within the message width, use the correct column direction, and align RTL cells correctly.
-- Mixed Hebrew-English task titles remain left-aligned in the sidebar. Their bidi styling is applied through CSS without rewriting React-owned title or marquee content.
+- Task titles containing any Hebrew letter are RTL and right-aligned in the sidebar; English-only titles remain LTR and left-aligned. The styling is applied through CSS without rewriting React-owned title or marquee content.
 - Claude interactive question and answer panels receive the same direction rules as normal messages.
 - Long conversations are processed in small idle-time batches instead of synchronous full-page scans.
 

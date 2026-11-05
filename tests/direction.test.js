@@ -44,6 +44,22 @@ const isQuestionCluster = context.window.__RT_AI_TEST_IS_QUESTION_CLUSTER__;
 const processMarkdownDocuments = context.window.__RT_AI_TEST_PROCESS_MARKDOWN__;
 const isInsideAppChrome = context.window.__RT_AI_TEST_IS_APP_CHROME__;
 
+assert.match(
+    payload,
+    /\[data-thread-title=\\"true\\"\]\[data-rt-ai-sidebar-rtl=\\"true\\"\]\{text-align:right!important\}/,
+    "Hebrew sidebar titles must align to the right"
+);
+assert.match(
+    payload,
+    /\[data-marquee-content=\\"true\\"\].*direction:rtl!important;text-align:right!important/,
+    "Hebrew marquee title content must remain RTL and align right"
+);
+assert.doesNotMatch(
+    payload,
+    /data-rt-ai-sidebar-rtl[^\r\n]*text-align:left!important/,
+    "Hebrew sidebar title rules must not force left alignment"
+);
+
 assert.equal(detectTextDir("Hello שלום"), "rtl");
 assert.equal(detectTextDir("translate שלום please"), "rtl");
 assert.equal(detectTextDir("Codex - בדיקה"), "rtl");
