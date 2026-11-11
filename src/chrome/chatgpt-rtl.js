@@ -10,6 +10,7 @@
   const CONTENT = '[data-message-author-role], [class*="MarkdownRoot-"], .markdown, .prose, [data-chatgpt-selection-message-id]';
   const INPUT = '#prompt-textarea, main .ProseMirror[contenteditable="true"], main textarea, form [contenteditable="true"]';
   const USER_TEXT = 'main .whitespace-pre-wrap, [data-message-author-role="user"]';
+  const WORD_PREVIEW = '[data-testid="docx-preview-panel"] .codex-docx-preview';
   const CODE_OR_MATH = 'pre, code, .code, .cm-editor, .monaco-editor, .katex, .katex-display, .MathJax, .MathJax_Display, mjx-container, math, .inline-math, [data-language]';
   const SHELL = 'nav, aside, header, [role="navigation"], [role="menu"], [role="toolbar"], button';
   const TARGETS = `${PROSE}, ${INPUT}, ${USER_TEXT}`;
@@ -193,7 +194,19 @@
   }
 
   function processElement(element) {
-    if (!isContent(element) || element.closest(CODE_OR_MATH)) return;
+    if (element.closest(CODE_OR_MATH)) return;
+    if (element.closest(WORD_PREVIEW)) {
+      // The Word preview is ordinary DOM outside the chat's <main>. Its
+      // paragraphs carry inline text-align:left, including Hebrew in table
+      // cells and headers. Align only the text blocks; changing the table or
+      // list container direction would reverse their column/item layout.
+      if (!element.matches("table, ul, ol")) {
+        const dir = direction(proseText(element));
+        setDirection(element, dir === "rtl" ? dir : null);
+      }
+      return;
+    }
+    if (!isContent(element)) return;
     const text = element.matches("textarea") ? element.value : proseText(element);
     setDirection(element, direction(text));
     repairProse(element, text);
@@ -247,7 +260,12 @@
       if (record.type === "childList") {
         enqueue(record.target);
         record.addedNodes.forEach(enqueue);
-      } else enqueue(record.target);
+      } else if (record.attributeName !== "dir" || !record.target.closest(WORD_PREVIEW) ||
+        record.target.getAttribute("dir") !== record.target.getAttribute(DIR)) {
+        // A large Word file can have thousands of paragraphs. Our own dir
+        // writes need no second pass; a site overwrite still gets repaired.
+        enqueue(record.target);
+      }
     }
   }).observe(document.documentElement, {
     subtree: true,
@@ -261,5 +279,5 @@
       if (e.target instanceof Element && e.target.matches(INPUT)) enqueue(e.target);
     }, true);
   }
-  document.documentElement.setAttribute("data-rightly-chatgpt-version", "1.0.21");
+  document.documentElement.setAttribute("data-rightly-chatgpt-version", "1.0.22");
 })();

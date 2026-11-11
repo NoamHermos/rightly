@@ -41,6 +41,31 @@ const { chromium } = require("playwright");
     for (const id of ["english", "english-item", "english-cell", "code-only", "inline-code", "pre", "code", "composer-english", "stream"]) {
       await checkDirection(id, "ltr", "left");
     }
+    // ChatGPT's Word preview lives outside <main> and gives even Hebrew
+    // paragraphs an explicit left alignment. Keep the document's table order.
+    for (const id of ["word-header", "word-title", "word-paragraph", "word-cell-hebrew", "word-cell-mixed"]) {
+      await checkDirection(id, "rtl", "right");
+    }
+    for (const id of ["word-english", "word-cell-number"]) {
+      await checkDirection(id, "ltr", "left");
+    }
+    await page.locator("#word-title").evaluate(el => el.setAttribute("dir", "auto"));
+    await page.waitForFunction(() => document.querySelector("#word-title").getAttribute("dir") === "rtl");
+    assert.equal(await page.locator("#word-table").getAttribute("data-rightly-chat-dir"), null);
+    const wordCellPositions = await page.locator("#word-table td").evaluateAll(cells =>
+      cells.map(cell => cell.getBoundingClientRect().left));
+    assert.ok(wordCellPositions[0] < wordCellPositions[1] && wordCellPositions[1] < wordCellPositions[2],
+      "Word preview table columns must keep their original order");
+    const originalWordParagraph = await page.locator("#word-paragraph").textContent();
+    await page.locator("#word-paragraph").evaluate(el => { el.textContent = "English only"; });
+    await checkDirection("word-paragraph", "ltr", "left");
+    await page.locator("#word-paragraph").evaluate((el, text) => { el.textContent = text; }, originalWordParagraph);
+    await checkDirection("word-paragraph", "rtl", "right");
+    await page.locator("#word-table").evaluate(el => {
+      el.insertAdjacentHTML("afterend", '<p id="word-late" style="text-align: left">פסקה שנוספה לתצוגה לאחר הפתיחה</p>');
+    });
+    await checkDirection("word-late", "rtl", "right");
+    await page.locator("#word-late").evaluate(el => el.remove());
     // Inline formulas stay in the paragraph; display formulas center their
     // visible equation, not just their full-width wrapper's bounding box.
     await checkDirection("formula", "ltr", "right");
