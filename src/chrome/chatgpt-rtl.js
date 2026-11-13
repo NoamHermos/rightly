@@ -279,5 +279,5 @@
       if (e.target instanceof Element && e.target.matches(INPUT)) enqueue(e.target);
     }, true);
   }
-  document.documentElement.setAttribute("data-rightly-chatgpt-version", "1.0.22");
+  document.documentElement.setAttribute("data-rightly-chatgpt-version", "1.0.23");
 })();

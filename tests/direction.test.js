@@ -304,16 +304,36 @@ processMarkdownDocuments(makeMarkdownDocument("python", codeLines));
 assert.equal(codeLines[0].dir, undefined);
 assert.equal(codeLines[1].dir, undefined, "code editors must not be redirected");
 
-// Codex puts file previews and diffs in an <aside>, which the app-chrome rule
-// would otherwise exclude wholesale. Only the navigation sidebar is chrome.
-function makeChromeProbe(chromeNode) {
-    return { closest: function () { return chromeNode; } };
-}
-const contentPanel = { matches: function (selector) { return selector.indexOf("right-panel") !== -1; } };
-const navigationAside = { matches: function () { return false; } };
+// Codex used an <aside> for file previews and now uses a <div>. The stable
+// right-panel label must win over an outer shell aside, while a toolbar nested
+// inside the preview remains application chrome.
+assert.match(payload,
+    /var CONTENT_PANEL_SEL = "\[data-app-shell-focus-area=\\"right-panel\\"\]";/,
+    "the file-preview selector must not depend on the panel element name");
+assert.doesNotMatch(payload,
+    /CONTENT_PANEL_SEL = "aside\[data-app-shell-focus-area/,
+    "current Codex builds render the file-preview panel as a div");
 
-assert.equal(isInsideAppChrome(makeChromeProbe(contentPanel)), false,
-    "the document panel holds content, so its text must still be corrected");
-assert.equal(isInsideAppChrome(makeChromeProbe(navigationAside)), true,
+function makeChromeProbe(contentPanelNode, chromeNode) {
+    return {
+        closest: function (selector) {
+            return selector.indexOf("right-panel") !== -1 ? contentPanelNode : chromeNode;
+        }
+    };
+}
+const nestedToolbar = {};
+const contentPanel = {
+    contains: function (node) { return node === nestedToolbar; }
+};
+const outerShellAside = {};
+const navigationAside = {};
+
+assert.equal(isInsideAppChrome(makeChromeProbe(contentPanel, contentPanel)), false,
+    "the legacy aside document panel still holds correctable content");
+assert.equal(isInsideAppChrome(makeChromeProbe(contentPanel, outerShellAside)), false,
+    "a current div document panel inside an outer aside must still be corrected");
+assert.equal(isInsideAppChrome(makeChromeProbe(contentPanel, nestedToolbar)), true,
+    "a toolbar nested inside the document panel stays excluded");
+assert.equal(isInsideAppChrome(makeChromeProbe(null, navigationAside)), true,
     "the navigation sidebar stays excluded");
-assert.equal(isInsideAppChrome(makeChromeProbe(null)), false);
+assert.equal(isInsideAppChrome(makeChromeProbe(null, null)), false);

@@ -22,10 +22,10 @@
     var TEXT_SEL = "p, li, h1, h2, h3, h4, h5, h6, blockquote, td, th";
     var TABLE_SEL = "table";
     var APP_CHROME_SEL = "nav, aside, [role=\"navigation\"], [role=\"menu\"], [role=\"menubar\"], [role=\"toolbar\"]";
-    // Codex puts file previews, diffs and documents in an <aside>, which
-    // APP_CHROME_SEL would otherwise exclude wholesale. The app labels that
-    // panel, and the real navigation sidebar carries no such label.
-    var CONTENT_PANEL_SEL = "aside[data-app-shell-focus-area=\"right-panel\"]";
+    // Codex puts file previews, diffs and documents in a labelled right panel.
+    // Older builds used an <aside>; current builds use a <div>. Match the
+    // stable app-shell label instead of the element name so both are covered.
+    var CONTENT_PANEL_SEL = "[data-app-shell-focus-area=\"right-panel\"]";
     var APP_SHELL_LTR_ATTR = "data-rt-ai-app-shell-ltr";
     var SIDEBAR_TITLE_SEL = "aside [data-thread-title=\"true\"]";
     // Codex renders its interactive question panels - the ones with a reply box
@@ -205,12 +205,15 @@
     }
 
     function isInsideAppChrome(el) {
+        var contentPanel = el && el.closest ? el.closest(CONTENT_PANEL_SEL) : null;
         var chrome = el && el.closest ? el.closest(APP_CHROME_SEL) : null;
         if (!chrome) return false;
-        // Only the nearest match matters: a toolbar inside the content panel is
-        // still chrome, while the panel itself holds text that needs correcting.
-        if (chrome.matches && chrome.matches(CONTENT_PANEL_SEL)) return false;
-        return true;
+        if (!contentPanel) return true;
+        // The content panel itself, and an outer <aside> used by older app-shell
+        // layouts, must not hide preview text. A toolbar nested inside the panel
+        // remains application chrome and is deliberately left alone.
+        if (chrome === contentPanel) return false;
+        return !!(contentPanel.contains && contentPanel.contains(chrome));
     }
 
     // Managed DOM state ------------------------------------------------------

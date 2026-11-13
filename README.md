@@ -108,9 +108,10 @@ Rightly installs a renderer payload tailored to each application. The payload fo
 - Inline code and technical controls remain LTR.
 - The GPT/Codex application shell remains LTR even when a Hebrew Windows locale makes Codex set `<html dir="rtl">`; only detected content is switched to RTL.
 - In GPT/Codex code blocks, each line containing at least one Hebrew letter is aligned RTL and to the right; all other lines remain LTR and aligned left.
-- The Codex document panel is an `<aside>`, but it holds file previews and diffs
-  rather than navigation, so it is corrected like any other content. Only the
-  navigation sidebar, and genuine toolbars inside the panel, stay untouched.
+- The Codex document panel is located by its stable `right-panel` app-shell label,
+  regardless of whether that release renders it as an `<aside>` or a `<div>`. It
+  holds file previews and diffs, so it is corrected like any other content. Only
+  the navigation sidebar, and genuine toolbars inside the panel, stay untouched.
 - Markdown files opened in the Codex side panel follow the same per-line rule. That
   panel is a CodeMirror editor, which is otherwise treated as code and left alone;
   a document is recognised by the `data-language="markdown"` CodeMirror marks, so
